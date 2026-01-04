@@ -122,14 +122,31 @@ class EDHRECClient:
             response = self._retry_request(url)
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            # Extract basic info (this is a simplified example)
-            data = {
-                "commander": commander_name,
-                "url": url,
-                "fetched_at": time.time(),
-                "cards": self._extract_card_recommendations(soup),
-                "themes": self._extract_themes(soup),
-            }
+            # Try to extract rich data from NEXT_DATA
+            next_data = self._extract_next_data(soup)
+
+            if next_data:
+                # Use the rich structured data
+                data = {
+                    "commander": commander_name,
+                    "url": url,
+                    "fetched_at": time.time(),
+                    "cards": self._extract_card_recommendations_from_json(next_data),
+                    "themes": self._extract_themes_from_json(next_data),
+                    # Additional metadata
+                    "meta": self._extract_metadata_from_json(next_data)
+                }
+            else:
+                # Fallback to scraping (simplified example)
+                print(f"Warning: Could not find structured JSON data for {commander_name}, falling back to basic scraping.")
+                data = {
+                    "commander": commander_name,
+                    "url": url,
+                    "fetched_at": time.time(),
+                    "cards": self._extract_card_recommendations(soup),
+                    "themes": self._extract_themes(soup),
+                    "meta": {}
+                }
 
             # Cache the result
             self._write_cache(cache_key, data)
@@ -144,8 +161,118 @@ class EDHRECClient:
                 "url": url
             }
 
+    def _extract_next_data(self, soup: BeautifulSoup) -> Optional[Dict[str, Any]]:
+        """Extract structured JSON data from Next.js hydration script."""
+        script_tag = soup.find("script", id="__NEXT_DATA__", type="application/json")
+        if script_tag and script_tag.string:
+            try:
+                return json.loads(script_tag.string)
+            except json.JSONDecodeError as e:
+                print(f"Error parsing NEXT_DATA JSON: {e}")
+        return None
+
+    def _extract_metadata_from_json(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract metadata from EDHREC JSON data."""
+        meta = {}
+        try:
+            page_props = data.get("props", {}).get("pageProps", {})
+            data_section = page_props.get("data", {})
+
+            # Extract commander stats
+            container = data_section.get("container", {})
+            if not container:
+                container = page_props.get("container", {})
+
+            json_dict = container.get("json_dict", {})
+            card_info = json_dict.get("card", {})
+
+            if card_info:
+                meta["rank"] = card_info.get("rank")
+                meta["total_decks"] = card_info.get("num_decks")
+                meta["salt_score"] = card_info.get("salt")
+                meta["is_commander"] = card_info.get("is_commander")
+
+            # Extract distribution stats
+            if "avg_price" in data_section:
+                meta["avg_price"] = data_section.get("avg_price")
+
+            # Mana curve
+            panels = data_section.get("panels", {})
+            if "mana_curve" in panels:
+                meta["mana_curve"] = panels.get("mana_curve")
+
+        except Exception as e:
+            print(f"Error extracting metadata: {e}")
+
+        return meta
+
+    def _extract_card_recommendations_from_json(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract card recommendations from EDHREC JSON data."""
+        cards = []
+        try:
+            page_props = data.get("props", {}).get("pageProps", {})
+            data_section = page_props.get("data", {})
+
+            container = data_section.get("container", {})
+            if not container:
+                container = page_props.get("container", {})
+
+            json_dict = container.get("json_dict", {})
+            cardlists = json_dict.get("cardlists", [])
+
+            for cardlist in cardlists:
+                category = cardlist.get("header", "Unknown")
+                # Skip new cards section as it's often less relevant for synergy analysis
+                if category == "New Cards":
+                    continue
+
+                for card in cardlist.get("cardviews", []):
+                    card_data = {
+                        "name": card.get("name"),
+                        "synergy": card.get("synergy"),
+                        "inclusion": card.get("inclusion"),
+                        "num_decks": card.get("num_decks"),
+                        "potential_decks": card.get("potential_decks"),
+                        "category": category,
+                        "url": f"{self.BASE_URL}{card.get('url', '')}"
+                    }
+                    cards.append(card_data)
+
+        except Exception as e:
+            print(f"Error extracting cards from JSON: {e}")
+
+        return cards
+
+    def _extract_themes_from_json(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract deck themes from EDHREC JSON data."""
+        themes = []
+        try:
+            page_props = data.get("props", {}).get("pageProps", {})
+            data_section = page_props.get("data", {})
+
+            # Themes are often in panels -> taglinks
+            panels = data_section.get("panels", {})
+            taglinks = panels.get("taglinks", [])
+
+            # Sometimes directly in data
+            if not taglinks:
+                taglinks = data_section.get("taglinks", [])
+
+            for tag in taglinks:
+                themes.append({
+                    "name": tag.get("value"),
+                    "count": tag.get("count"),
+                    "slug": tag.get("slug"),
+                    "url": f"{self.BASE_URL}/themes/{tag.get('slug', '')}"
+                })
+
+        except Exception as e:
+            print(f"Error extracting themes from JSON: {e}")
+
+        return themes
+
     def _extract_card_recommendations(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
-        """Extract card recommendations from EDHREC page."""
+        """Extract card recommendations from EDHREC page (Legacy fallback)."""
         cards = []
 
         # EDHREC uses various card panel structures
@@ -162,8 +289,8 @@ class EDHRECClient:
 
         return cards
 
-    def _extract_themes(self, soup: BeautifulSoup) -> List[str]:
-        """Extract deck themes from EDHREC page."""
+    def _extract_themes(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+        """Extract deck themes from EDHREC page (Legacy fallback)."""
         themes = []
 
         # Extract theme information
@@ -172,7 +299,10 @@ class EDHRECClient:
         for theme in theme_sections[:10]:  # Limit to top 10
             theme_name = theme.get_text(strip=True)
             if theme_name:
-                themes.append(theme_name)
+                themes.append({
+                    "name": theme_name,
+                    "url": f"{self.BASE_URL}{theme.get('href')}" if theme.get('href') else ""
+                })
 
         return themes
 

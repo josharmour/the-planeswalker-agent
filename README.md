@@ -2,7 +2,7 @@ The Planeswalker Agent
 
 An Agentic AI Domain Expert for Magic: The Gathering
 
-Project Codename: Antigravity Module Alpha Architecture: LangGraph Multi-Agent System
+Project Codename: Antigravity Module Beta Architecture: LangGraph Multi-Agent System
 
 Overview
 
@@ -144,3 +144,5 @@ User: Lead Architect
 Jules: Co-Pilot / Agent
 
 Gemini: Model Support
+
+Claude: Architecture Implementation

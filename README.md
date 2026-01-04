@@ -45,7 +45,14 @@ Download the latest Oracle card data from Scryfall and populate the local cache:
 python ingest_data.py
 
 
-3. Running the Agent
+3. Testing Metagame Integrations (Sprint 2)
+
+Test EDHREC and 17Lands API integrations:
+
+python test_metagame.py
+
+
+4. Running the Agent
 
 Start the agent in CLI mode:
 
@@ -58,7 +65,7 @@ Roadmap
 
 [x] Sprint 1: Scryfall Data & Vector DB
 
-[ ] Sprint 2: EDHREC & 17Lands Integration
+[x] Sprint 2: EDHREC & 17Lands Integration
 
 [ ] Sprint 3: Synergy Graph Implementation
 

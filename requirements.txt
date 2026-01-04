@@ -9,4 +9,5 @@ pandas
 scikit-learn
 mtgsdk
 python-dotenv
-requests
+beautifulsoup4
+lxml

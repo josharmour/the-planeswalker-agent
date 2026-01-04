@@ -7,6 +7,6 @@ networkx
 requests
 pandas
 scikit-learn
-mtg-sdk
+mtgsdk
 python-dotenv
 requests

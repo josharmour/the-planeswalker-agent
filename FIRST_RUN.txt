@@ -1,0 +1,322 @@
+================================================================================
+FIRST RUN GUIDE - The Planeswalker Agent
+================================================================================
+
+This guide walks you through setting up The Planeswalker Agent for the first
+time on your local machine.
+
+IMPORTANT: NO TRAINING REQUIRED
+================================================================================
+
+The Planeswalker Agent uses training-free approaches:
+- TF-IDF embeddings (computed directly from card data)
+- NetworkX graph (built from deterministic rules)
+- Monte Carlo simulation (pure algorithmic)
+- Rule-based systems (no neural networks)
+
+There are ZERO models that need training. The "setup" phase is just data
+preprocessing, not training.
+
+
+STEP 1: CLONE AND SETUP (5 minutes)
+================================================================================
+
+1. Clone the repository:
+   git clone https://github.com/josharmour/the-planeswalker-agent.git
+   cd the-planeswalker-agent
+
+2. Create virtual environment:
+   python -m venv venv
+
+3. Activate virtual environment:
+   # On macOS/Linux:
+   source venv/bin/activate
+
+   # On Windows:
+   venv\Scripts\activate
+
+4. Install dependencies:
+   pip install -r requirements.txt
+
+
+STEP 2: DOWNLOAD CARD DATABASE (2-3 minutes)
+================================================================================
+
+Download all ~25,000 Oracle cards from Scryfall:
+
+python ingest_data.py --force-download
+
+This will:
+- Download the complete Scryfall Oracle database (~80-100 MB)
+- Build ChromaDB vector store with TF-IDF embeddings
+- Create data/oracle-cards.json
+- Create data/chroma_db/ directory
+- Create data/vectorizer.pkl
+
+Expected output:
+  Fetching bulk data list from Scryfall...
+  Downloading Oracle cards from: https://...
+  Size: ~XX MB
+  Loading cards from data/oracle-cards.json...
+  Loaded XXXXX cards
+  Upserting XXXXX cards into ChromaDB...
+  ✓ Upserted XXXXX cards successfully
+
+
+STEP 3: BUILD SYNERGY GRAPH (10-30 minutes)
+================================================================================
+
+Analyze all card pairs and build the NetworkX synergy graph:
+
+python build_synergy_graph.py
+
+This will:
+- Load all cards from the database
+- Analyze card features (types, mechanics, keywords, themes)
+- Build weighted edges between synergistic cards
+- Create data/synergy_graph.json
+
+Expected output:
+  Loading card data...
+  Loaded XXXXX cards
+  Adding cards to synergy graph...
+  ✓ Added XXXXX cards to graph
+  Analyzing card relationships...
+  Building synergies for XXXXX cards...
+  Created XXXXXX synergy relationships
+  ✓ Synergy analysis complete
+
+
+STEP 4: VERIFY SETUP (optional, 1 minute)
+================================================================================
+
+Run the test suites to verify everything is working:
+
+# Test semantic search
+python test_query.py "creature that draws cards"
+
+# Test metagame integrations
+python test_metagame.py
+
+# Test synergy detection
+python test_synergy.py
+
+# Test Monte Carlo simulation
+python test_simulator.py
+
+
+STEP 5: RUN THE AGENT (ready!)
+================================================================================
+
+You're ready! The agent can run in two modes:
+
+INTERACTIVE MODE:
+  python mtg_agent.py
+
+  Then type your questions:
+  > Find me cards that draw when they enter the battlefield
+  > What are good cards for an Atraxa deck?
+  > What's the best color pair in MKM draft?
+
+SINGLE QUERY MODE:
+  python mtg_agent.py "your question here"
+
+  Examples:
+  python mtg_agent.py "Show me powerful Commander staples"
+  python mtg_agent.py "Find cards for a token strategy"
+
+
+EXPECTED PERFORMANCE (with full 25,000-card database)
+================================================================================
+
+Initial Setup (one-time):
+- Step 2 (Download): ~2-3 minutes
+- Step 3 (Build graph): ~10-30 minutes
+- Total: ~30-45 minutes
+
+Runtime Performance:
+- Agent query: 1-3 seconds
+- Card search: <100ms
+- Synergy analysis: <500ms
+- Simulation: <1 second
+
+
+DATA FILES CREATED
+================================================================================
+
+After setup, your data/ directory will contain:
+
+/data/
+  oracle-cards.json       # Full Scryfall database (~80-100 MB)
+  vectorizer.pkl          # TF-IDF model (auto-generated)
+  chroma_db/              # Vector embeddings for semantic search
+  synergy_graph.json      # Card relationship graph (~10-50 MB)
+  edhrec_cache/           # Cached metagame data (auto-populated)
+  17lands_cache/          # Cached metagame data (auto-populated)
+
+All these are gitignored (except the last two cache directories).
+
+
+TROUBLESHOOTING
+================================================================================
+
+Q: "ModuleNotFoundError: No module named 'chromadb'"
+A: Make sure you activated the virtual environment:
+   source venv/bin/activate  # or venv\Scripts\activate on Windows
+
+Q: "Failed to fetch https://api.scryfall.com/..."
+A: Check your internet connection. Scryfall API is required for initial setup.
+
+Q: "Synergy graph not found"
+A: Run: python build_synergy_graph.py
+
+Q: Agent queries return "No relevant cards found"
+A: Make sure you ran ingest_data.py successfully. Check that
+   data/oracle-cards.json exists and has content.
+
+Q: How do I update the card database?
+A: Re-run the ingestion with force download:
+   python ingest_data.py --force-download
+   python build_synergy_graph.py --rebuild
+
+
+OPTIONAL: AUTO-UPDATE SCHEDULE
+================================================================================
+
+To keep card data current, set up a weekly cron job (Linux/Mac):
+
+0 0 * * 0 cd /path/to/the-planeswalker-agent && \
+  source venv/bin/activate && \
+  python ingest_data.py --force-download && \
+  python build_synergy_graph.py --rebuild
+
+This refreshes data every Sunday at midnight.
+
+
+OPTIONAL: BETTER EMBEDDINGS
+================================================================================
+
+For improved semantic search, you can upgrade from TF-IDF to sentence-transformers:
+
+1. Install sentence-transformers:
+   pip install sentence-transformers
+
+2. Modify src/data/chroma.py to use:
+   from sentence_transformers import SentenceTransformer
+   model = SentenceTransformer('all-MiniLM-L6-v2')
+
+This downloads a pre-trained model (~80MB) but requires NO training.
+
+
+OPTIONAL: DEPLOY AS API
+================================================================================
+
+To run as a REST API service:
+
+1. Install FastAPI:
+   pip install fastapi uvicorn
+
+2. Create api.py:
+   from fastapi import FastAPI
+   from mtg_agent import create_agent, run_query
+
+   app = FastAPI()
+   agent = create_agent()
+
+   @app.post("/query")
+   def query_agent(query: str):
+       result = run_query(agent, query)
+       return {"response": result["final_response"]}
+
+3. Run:
+   uvicorn api:app --host 0.0.0.0 --port 8000
+
+
+SYSTEM REQUIREMENTS
+================================================================================
+
+Minimum:
+- Python 3.11+
+- 2 GB RAM
+- 500 MB disk space
+- Internet connection (initial setup only)
+
+Recommended:
+- Python 3.11+
+- 4+ GB RAM
+- 1 GB disk space
+- Internet connection for metagame updates
+
+
+WHAT HAPPENS DURING EACH STEP
+================================================================================
+
+STEP 2 (ingest_data.py):
+1. Downloads latest Oracle cards JSON from Scryfall
+2. Extracts card features (name, type, oracle text, keywords, etc.)
+3. Builds TF-IDF vectorizer from card text
+4. Generates embeddings for all cards
+5. Stores in ChromaDB for semantic search
+
+STEP 3 (build_synergy_graph.py):
+1. Loads all cards from database
+2. Extracts synergy features (tribes, mechanics, themes, keywords)
+3. Compares every card pair (O(n²) operation)
+4. Calculates synergy scores based on shared features
+5. Creates NetworkX graph with weighted edges
+6. Serializes to JSON for fast loading
+
+
+AGENT WORKFLOW
+================================================================================
+
+When you run a query, the agent executes this workflow:
+
+1. Router: Classifies query as Constructed or Limited
+2. Oracle: Semantic search via ChromaDB vector database
+3. Synergy: Analyzes card interactions via NetworkX graph
+4. Metagame: Fetches EDHREC (Constructed) or 17Lands (Limited) stats
+5. Synthesizer: Combines all results into formatted response
+
+All data is cached locally for offline usage and faster responses.
+
+
+CAPABILITIES
+================================================================================
+
+The agent provides:
+✓ Semantic card search
+✓ Card synergy recommendations
+✓ Combo detection
+✓ Deck building suggestions
+✓ Live metagame statistics
+✓ Mana curve analysis
+✓ Opening hand simulation
+✓ Goldfishing (turn-by-turn deck testing)
+
+
+SUPPORT
+================================================================================
+
+For issues, questions, or contributions:
+- GitHub: https://github.com/josharmour/the-planeswalker-agent
+- Issues: https://github.com/josharmour/the-planeswalker-agent/issues
+
+
+CREDITS
+================================================================================
+
+Data Sources:
+- Scryfall API (https://scryfall.com)
+- EDHREC (https://edhrec.com)
+- 17Lands (https://www.17lands.com)
+
+Technologies:
+- LangGraph (agent orchestration)
+- ChromaDB (vector database)
+- NetworkX (graph analysis)
+- scikit-learn (TF-IDF embeddings)
+
+================================================================================
+Ready to solve the metagame? Run: python mtg_agent.py
+================================================================================

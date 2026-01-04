@@ -12,7 +12,9 @@ def create_sample_deck() -> list:
         deck.append({
             "name": f"Island {i+1}",
             "type_line": "Basic Land — Island",
-            "cmc": 0
+            "cmc": 0,
+            "produced_mana": ["U"],
+            "oracle_text": "{T}: Add {U}."
         })
 
     # 1-drops (4 cards)
@@ -20,7 +22,8 @@ def create_sample_deck() -> list:
         deck.append({
             "name": f"One Drop {i+1}",
             "type_line": "Creature",
-            "cmc": 1
+            "cmc": 1,
+            "mana_cost": "{U}"
         })
 
     # 2-drops (8 cards)
@@ -28,7 +31,8 @@ def create_sample_deck() -> list:
         deck.append({
             "name": f"Two Drop {i+1}",
             "type_line": "Creature",
-            "cmc": 2
+            "cmc": 2,
+            "mana_cost": "{1}{U}"
         })
 
     # 3-drops (10 cards)
@@ -36,7 +40,8 @@ def create_sample_deck() -> list:
         deck.append({
             "name": f"Three Drop {i+1}",
             "type_line": "Creature",
-            "cmc": 3
+            "cmc": 3,
+            "mana_cost": "{2}{U}"
         })
 
     # 4-drops (8 cards)
@@ -44,7 +49,8 @@ def create_sample_deck() -> list:
         deck.append({
             "name": f"Four Drop {i+1}",
             "type_line": "Creature",
-            "cmc": 4
+            "cmc": 4,
+            "mana_cost": "{2}{U}{U}"
         })
 
     # 5-drops (4 cards)
@@ -52,7 +58,8 @@ def create_sample_deck() -> list:
         deck.append({
             "name": f"Five Drop {i+1}",
             "type_line": "Creature",
-            "cmc": 5
+            "cmc": 5,
+            "mana_cost": "{3}{U}{U}"
         })
 
     # 6-drops (2 cards)
@@ -60,7 +67,8 @@ def create_sample_deck() -> list:
         deck.append({
             "name": f"Six Drop {i+1}",
             "type_line": "Creature",
-            "cmc": 6
+            "cmc": 6,
+            "mana_cost": "{4}{U}{U}"
         })
 
     return deck

@@ -1,9 +1,119 @@
 """Monte Carlo simulation engine for deck testing and analysis."""
 
 import random
-from typing import List, Dict, Any, Optional, Tuple
+import re
+from typing import List, Dict, Any, Optional, Tuple, Set
 from collections import Counter
 import statistics
+
+
+class ManaUtils:
+    """Utilities for complex mana calculation and checking."""
+
+    @staticmethod
+    def parse_cost(mana_cost: str) -> Dict[str, int]:
+        """
+        Parses mana cost string like "{3}{U}{U}" into {'C': 3, 'U': 2}.
+        'C' represents generic/colorless requirement.
+        """
+        if not mana_cost:
+            return {'C': 0}
+
+        cost = {'C': 0, 'W': 0, 'U': 0, 'B': 0, 'R': 0, 'G': 0}
+
+        # Find all {X} patterns
+        symbols = re.findall(r'\{([^}]+)\}', mana_cost)
+
+        for sym in symbols:
+            if sym.isdigit():
+                cost['C'] += int(sym)
+            elif sym == 'X':
+                pass
+            elif '/' in sym:
+                # Hybrid mana, e.g., {U/B}, {2/W}
+                parts = sym.split('/')
+                if parts[0].isdigit():
+                     cost['C'] += int(parts[0])
+                else:
+                    # Treat {U/B} as the first color for conservative estimate
+                    if parts[0] in cost:
+                        cost[parts[0]] += 1
+            elif sym in cost:
+                cost[sym] += 1
+
+        return cost
+
+    @staticmethod
+    def get_mana_sources(card: Dict[str, Any]) -> List[Set[str]]:
+        """
+        Returns a list of mana points this card can produce.
+        Each point is a set of possible colors ('W','U','B','R','G','C').
+        """
+        produced = card.get('produced_mana')
+        if not produced:
+            return []
+
+        oracle_text = card.get('oracle_text', '')
+
+        # Regex to find "Add {X}{Y}..." (TWO or more consecutive mana symbols)
+        # This distinguishes "Add {C}{G}" (2 mana) from "Add {U} or {B}" (1 mana).
+        add_matches = re.findall(r'Add\s*((?:\{[WUBRGC0-9]\}){2,})', oracle_text)
+
+        sources = []
+
+        if add_matches:
+            # Parse the first match (usually the primary ability)
+            symbols = re.findall(r'\{([^}]+)\}', add_matches[0])
+            for sym in symbols:
+                if sym in ['W', 'U', 'B', 'R', 'G', 'C']:
+                    sources.append({sym})
+                elif sym.isdigit():
+                     count = int(sym)
+                     for _ in range(count):
+                         sources.append({'C'})
+        else:
+            # Fallback if no specific multiple-mana quantity found but produced_mana exists
+            # Assume 1 mana, capable of producing any color in produced_mana
+            sources.append(set(produced))
+
+        return sources
+
+    @staticmethod
+    def pay(mana_pool: List[Set[str]], cost: Dict[str, int]) -> bool:
+        """
+        Attempts to pay the cost using mana_pool.
+        If successful, modifies mana_pool in-place by removing used sources and returns True.
+        If unsuccessful, leaves mana_pool unchanged (or partially modified, so pass a copy!)
+        """
+        # Sort pool by flexibility (most restrictive first)
+        mana_pool.sort(key=lambda x: len(x))
+
+        # Check colored costs
+        for color in ['W', 'U', 'B', 'R', 'G']:
+            required = cost.get(color, 0)
+            for _ in range(required):
+                # Find a source that has this color
+                found_idx = -1
+                for i, source in enumerate(mana_pool):
+                    if color in source:
+                        found_idx = i
+                        break
+
+                if found_idx != -1:
+                    mana_pool.pop(found_idx)
+                else:
+                    return False
+
+        # Check generic cost
+        generic_needed = cost.get('C', 0)
+        if len(mana_pool) >= generic_needed:
+            # Consume generic mana
+            for _ in range(generic_needed):
+                if mana_pool:
+                    mana_pool.pop(0)
+            return True
+        else:
+            return False
 
 
 class Deck:
@@ -83,12 +193,23 @@ class Deck:
         """Count number of non-land cards in hand."""
         return len(self.hand) - self.count_lands_in_hand()
 
-    def get_castable_spells(self, available_mana: int) -> List[Dict[str, Any]]:
+    def get_available_mana_sources(self) -> List[Set[str]]:
+        """
+        Calculates available mana sources from battlefield.
+        Returns a list of sets, where each set represents a mana point's capabilities.
+        """
+        sources = []
+        for card in self.battlefield:
+            card_sources = ManaUtils.get_mana_sources(card)
+            sources.extend(card_sources)
+        return sources
+
+    def get_castable_spells(self, mana_sources: List[Set[str]]) -> List[Dict[str, Any]]:
         """
         Get spells in hand that can be cast with available mana.
 
         Args:
-            available_mana: Amount of mana available
+            mana_sources: List of available mana sources
 
         Returns:
             List of castable cards
@@ -97,8 +218,10 @@ class Deck:
         for card in self.hand:
             type_line = card.get("type_line", "").lower()
             if "land" not in type_line:  # Not a land
-                cmc = card.get("cmc", 0)
-                if cmc <= available_mana:
+                # Parse cost
+                cost = ManaUtils.parse_cost(card.get('mana_cost', ''))
+                # Check if we can pay (using a copy of sources to avoid modification)
+                if ManaUtils.pay(mana_sources[:], cost):
                     castable.append(card)
         return castable
 
@@ -236,22 +359,28 @@ class GoldfishSimulator:
                     land_played = True
                     break
 
-            # Count available mana (simplified: 1 per land)
-            available_mana = lands_played_total
+            # Count available mana
+            mana_sources = self.deck.get_available_mana_sources()
+
+            # Simple metric for display/stats (just count sources)
+            available_mana_count = len(mana_sources)
 
             # Try to cast spells
             spells_cast_this_turn = 0
-            castable = self.deck.get_castable_spells(available_mana)
+
+            # Get castable spells (this checks against full mana pool)
+            castable = self.deck.get_castable_spells(mana_sources)
 
             # Cast spells in order of decreasing CMC (greedy)
             castable.sort(key=lambda c: c.get("cmc", 0), reverse=True)
 
             for spell in castable:
-                cmc = spell.get("cmc", 0)
-                if cmc <= available_mana:
+                cost = ManaUtils.parse_cost(spell.get('mana_cost', ''))
+
+                # Try to pay (this modifies mana_sources in place)
+                if ManaUtils.pay(mana_sources, cost):
                     self.deck.hand.remove(spell)
                     self.deck.battlefield.append(spell)
-                    available_mana -= cmc
                     spells_cast_this_turn += 1
                     spells_cast_total += 1
 
@@ -261,7 +390,7 @@ class GoldfishSimulator:
                 "lands_in_play": lands_played_total,
                 "spells_cast": spells_cast_this_turn,
                 "cards_in_hand": len(self.deck.hand),
-                "available_mana": lands_played_total
+                "available_mana": available_mana_count
             })
 
         return {

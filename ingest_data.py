@@ -1,66 +1,32 @@
-import requests
-import json
-import os
-import time
+import sys
+import argparse
+from src.data.scryfall import ScryfallLoader
+from src.data.chroma import VectorStore
 
-# Configuration
-SCRYFALL_BULK_URL = "https://api.scryfall.com/bulk-data/oracle-cards"
-DATA_DIR = "data"
-OUTPUT_FILE = os.path.join(DATA_DIR, "oracle_cards.json")
+def main():
+    parser = argparse.ArgumentParser(description="Ingest Magic: The Gathering card data.")
+    parser.add_argument("--limit", type=int, help="Limit the number of cards to process (for testing).")
+    parser.add_argument("--force-download", action="store_true", help="Force re-download of Scryfall data.")
+    args = parser.parse_args()
 
-def fetch_scryfall_data():
-    """
-    Downloads the latest 'Oracle Cards' object from Scryfall.
-    This is the lightweight JSON containing gameplay-relevant data.
-    """
-    print("--- Contacting Scryfall API ---")
-    
-    # 1. Get the download URI
+    # 1. Load Data
+    loader = ScryfallLoader()
     try:
-        response = requests.get(SCRYFALL_BULK_URL)
-        response.raise_for_status()
-        metadata = response.json()
-        download_uri = metadata['download_uri']
-        print(f"Found Bulk Data: {metadata['updated_at']}")
+        loader.fetch_data(force_download=args.force_download)
+        cards = loader.load_cards(limit=args.limit)
     except Exception as e:
-        print(f"Error fetching metadata: {e}")
-        return
+        print(f"Failed to load data: {e}")
+        sys.exit(1)
 
-    # 2. Download the actual file
-    print(f"Downloading from {download_uri}...")
+    # 2. Vector Database
     try:
-        data_response = requests.get(download_uri, stream=True)
-        data_response.raise_for_status()
-        
-        if not os.path.exists(DATA_DIR):
-            os.makedirs(DATA_DIR)
-            
-        with open(OUTPUT_FILE, 'wb') as f:
-            for chunk in data_response.iter_content(chunk_size=8192):
-                f.write(chunk)
-                
-        print(f"Success! Data saved to {OUTPUT_FILE}")
-        
+        store = VectorStore()
+        store.upsert_cards(cards)
     except Exception as e:
-        print(f"Error downloading bulk data: {e}")
+        print(f"Failed to ingest into Vector DB: {e}")
+        sys.exit(1)
 
-def process_for_embedding():
-    """
-    Stub for Sprint 1, Task 1.2
-    Reads the JSON and prepares 'Rich Context' strings for the Vector DB.
-    """
-    if not os.path.exists(OUTPUT_FILE):
-        print("No data file found. Run download first.")
-        return
-
-    print("--- Processing Data for Embeddings (Stub) ---")
-    # Future logic: Load JSON, iterate cards, format strings -> ChromaDB
-    # Example logic:
-    # with open(OUTPUT_FILE, 'r') as f:
-    #     cards = json.load(f)
-    #     for card in cards[:5]:
-    #         print(f"Ready to embed: {card['name']} | {card.get('oracle_text', '')}")
+    print("Ingestion complete.")
 
 if __name__ == "__main__":
-    fetch_scryfall_data()
-    # process_for_embedding()
+    main()

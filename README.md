@@ -45,14 +45,23 @@ Download the latest Oracle card data from Scryfall and populate the local cache:
 python ingest_data.py
 
 
-3. Testing Metagame Integrations (Sprint 2)
+3. Building Synergy Graph (Sprint 3)
 
-Test EDHREC and 17Lands API integrations:
+Build the card synergy graph using NetworkX:
 
+python build_synergy_graph.py
+
+
+4. Testing Components
+
+Test metagame integrations:
 python test_metagame.py
 
+Test synergy detection:
+python test_synergy.py
 
-4. Running the Agent
+
+5. Running the Agent
 
 The agent can run in two modes:
 
@@ -76,10 +85,18 @@ The agent uses a LangGraph StateGraph workflow:
 
 1. Router: Classifies your query as Constructed (Commander) or Limited (Draft/Sealed)
 2. Oracle: Performs semantic card search using ChromaDB vector database
-3. Metagame: Fetches relevant statistics from EDHREC (Constructed) or 17Lands (Limited)
-4. Synthesizer: Combines all results into a comprehensive response
+3. Synergy: Analyzes card interactions using NetworkX graph
+4. Metagame: Fetches relevant statistics from EDHREC (Constructed) or 17Lands (Limited)
+5. Synthesizer: Combines all results into a comprehensive response
 
 All data is cached locally for offline usage and faster responses.
+
+The agent now provides:
+- Semantic card search
+- Card synergy recommendations
+- Combo detection
+- Deck building suggestions
+- Live metagame statistics
 
 
 Roadmap
@@ -92,7 +109,7 @@ Roadmap
 
 [x] LangGraph Agent Implementation
 
-[ ] Sprint 3: Synergy Graph Implementation
+[x] Sprint 3: Synergy Graph Implementation
 
 [ ] Sprint 4: Simulation Engine
 

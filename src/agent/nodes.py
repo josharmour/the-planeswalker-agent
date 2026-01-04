@@ -5,6 +5,7 @@ from src.agent.state import AgentState
 from src.data.chroma import VectorStore
 from src.data.edhrec import EDHRECClient
 from src.data.seventeenlands import SeventeenLandsClient
+from src.cognitive import SynergyGraph
 
 
 def router_node(state: AgentState) -> AgentState:
@@ -223,6 +224,70 @@ def limited_metagame_node(state: AgentState) -> AgentState:
     return state
 
 
+def synergy_node(state: AgentState) -> AgentState:
+    """
+    Find card synergies using the synergy graph.
+
+    Analyzes Oracle results to find synergistic cards and combos.
+
+    Args:
+        state: Current agent state with oracle_results
+
+    Returns:
+        Updated state with synergy_results
+    """
+    oracle_results = state.get("oracle_results", [])
+
+    if not oracle_results:
+        print("[Synergy] Skipping (no cards to analyze)")
+        state["synergy_results"] = None
+        return state
+
+    print("[Synergy] Analyzing card interactions...")
+
+    try:
+        # Load synergy graph
+        graph = SynergyGraph()
+        if not graph.load():
+            print("[Synergy] Synergy graph not found. Run build_synergy_graph.py first.")
+            state["synergy_results"] = None
+            return state
+
+        # Get synergies for top cards found
+        synergy_results = {}
+        card_names = [card["name"] for card in oracle_results[:3]]  # Top 3 cards
+
+        # Find synergies for each card
+        for card_name in card_names:
+            synergies = graph.find_synergies_for_card(card_name, top_n=5)
+            if synergies:
+                synergy_results[card_name] = [
+                    {
+                        "card": syn_card,
+                        "score": score,
+                        "types": syn_types
+                    }
+                    for syn_card, score, syn_types in synergies
+                ]
+
+        # Get cluster recommendations based on all found cards
+        cluster_recs = graph.get_cluster_recommendations(card_names, top_n=5)
+        if cluster_recs:
+            synergy_results["cluster_recommendations"] = [
+                {"card": card, "score": score}
+                for card, score in cluster_recs
+            ]
+
+        state["synergy_results"] = synergy_results
+        print(f"[Synergy] Found synergies for {len(synergy_results)} cards")
+
+    except Exception as e:
+        print(f"[Synergy] Error: {e}")
+        state["synergy_results"] = None
+
+    return state
+
+
 def synthesizer_node(state: AgentState) -> AgentState:
     """
     Synthesize results from Oracle and Metagame into a final response.
@@ -241,6 +306,7 @@ def synthesizer_node(state: AgentState) -> AgentState:
     query = state["user_query"]
     query_type = state.get("query_type", "unknown")
     oracle_results = state.get("oracle_results", [])
+    synergy_results = state.get("synergy_results", {})
     metagame_results = state.get("metagame_results", {})
 
     response_parts = []
@@ -261,6 +327,32 @@ def synthesizer_node(state: AgentState) -> AgentState:
         response_parts.append("")
     else:
         response_parts.append("No relevant cards found in database.")
+        response_parts.append("")
+
+    # Synergy results
+    if synergy_results:
+        response_parts.append("=== Card Synergies ===")
+
+        # Show synergies for individual cards
+        for card_name, synergies in synergy_results.items():
+            if card_name == "cluster_recommendations":
+                continue  # Handle separately
+
+            if synergies:
+                response_parts.append(f"\n{card_name} works well with:")
+                for syn in synergies[:3]:  # Top 3 synergies
+                    syn_types = ", ".join(syn.get("types", []))
+                    response_parts.append(
+                        f"  - {syn['card']} ({syn_types})"
+                    )
+
+        # Show cluster recommendations
+        cluster_recs = synergy_results.get("cluster_recommendations", [])
+        if cluster_recs:
+            response_parts.append("\nRecommended additions for this deck:")
+            for rec in cluster_recs[:5]:
+                response_parts.append(f"  - {rec['card']}")
+
         response_parts.append("")
 
     # Metagame results

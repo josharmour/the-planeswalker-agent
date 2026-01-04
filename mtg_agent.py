@@ -12,6 +12,7 @@ from src.agent.state import AgentState
 from src.agent.nodes import (
     router_node,
     oracle_node,
+    synergy_node,
     constructed_metagame_node,
     limited_metagame_node,
     synthesizer_node
@@ -36,8 +37,9 @@ def create_agent() -> StateGraph:
     Workflow:
     1. Router: Classify query as Constructed or Limited
     2. Oracle: Semantic card search (always runs)
-    3. Metagame: Fetch EDHREC or 17Lands data (conditional)
-    4. Synthesizer: Combine results into final response
+    3. Synergy: Analyze card interactions (always runs)
+    4. Metagame: Fetch EDHREC or 17Lands data (conditional)
+    5. Synthesizer: Combine results into final response
 
     Returns:
         Compiled StateGraph ready to execute
@@ -48,6 +50,7 @@ def create_agent() -> StateGraph:
     # Add nodes
     workflow.add_node("router", router_node)
     workflow.add_node("oracle", oracle_node)
+    workflow.add_node("synergy", synergy_node)
     workflow.add_node("constructed_metagame", constructed_metagame_node)
     workflow.add_node("limited_metagame", limited_metagame_node)
     workflow.add_node("synthesizer", synthesizer_node)
@@ -59,9 +62,12 @@ def create_agent() -> StateGraph:
     # Router -> Oracle (always)
     workflow.add_edge("router", "oracle")
 
-    # Oracle -> Metagame (conditional based on query type)
+    # Oracle -> Synergy (always)
+    workflow.add_edge("oracle", "synergy")
+
+    # Synergy -> Metagame (conditional based on query type)
     workflow.add_conditional_edges(
-        "oracle",
+        "synergy",
         route_to_metagame,
         {
             "constructed_metagame": "constructed_metagame",
@@ -97,6 +103,7 @@ def run_query(agent: StateGraph, query: str) -> Dict[str, Any]:
         "user_query": query,
         "query_type": None,
         "oracle_results": None,
+        "synergy_results": None,
         "metagame_results": None,
         "final_response": None,
         "metadata": {}

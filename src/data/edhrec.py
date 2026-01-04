@@ -148,17 +148,58 @@ class EDHRECClient:
         """Extract card recommendations from EDHREC page."""
         cards = []
 
-        # EDHREC uses various card panel structures
-        # This is a simplified extraction - real implementation would be more robust
-        card_panels = soup.find_all('div', class_='card-panel') or soup.find_all('a', class_='card')
+        # Helper to check for partial class match
+        def class_contains(tag, text):
+            return tag.has_attr('class') and any(text in c for c in tag['class'])
 
-        for panel in card_panels[:20]:  # Limit to top 20
-            card_name = panel.get('data-name') or panel.get_text(strip=True)
-            if card_name:
-                cards.append({
-                    "name": card_name,
-                    "synergy": "high"  # Placeholder - would extract actual synergy score
-                })
+        # Try to find new React-style card containers
+        card_containers = soup.find_all(lambda t: t.name == 'div' and class_contains(t, 'Card_container'))
+
+        # Fallback to legacy selectors
+        if not card_containers:
+            card_containers = soup.find_all('div', class_='card-panel') or soup.find_all('a', class_='card')
+
+        for panel in card_containers[:20]:  # Limit to top 20
+            card_name = None
+
+            # 1. Extract Name
+            # New structure name
+            name_span = panel.find(lambda t: t.name == 'span' and class_contains(t, 'Card_name'))
+            if name_span:
+                card_name = name_span.get_text(strip=True)
+
+            # Legacy structure name or fallback
+            if not card_name:
+                card_name = panel.get('data-name')
+
+            if not card_name:
+                # Only fallback to get_text on panel if it's NOT the new container structure
+                # (to avoid grabbing all text in the container)
+                is_new_container = panel.name == 'div' and class_contains(panel, 'Card_container')
+                if not is_new_container:
+                    card_name = panel.get_text(strip=True)
+
+            if not card_name:
+                continue
+
+            # 2. Extract Synergy
+            synergy_score = "high"  # Default
+
+            # Find "synergy" text within this panel
+            synergy_label = panel.find(string=lambda t: t and 'synergy' == t.lower().strip())
+
+            if synergy_label:
+                # Expecting structure: <span>Score</span><span>synergy</span>
+                label_span = synergy_label.parent
+                if label_span:
+                    score_span = label_span.find_previous_sibling('span')
+                    if score_span:
+                        synergy_score = score_span.get_text(strip=True)
+
+            cards.append({
+                "name": card_name,
+                "synergy": synergy_score
+            })
 
         return cards
 

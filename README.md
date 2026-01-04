@@ -45,24 +45,97 @@ Download the latest Oracle card data from Scryfall and populate the local cache:
 python ingest_data.py
 
 
-3. Running the Agent
+3. Building Synergy Graph (Sprint 3)
 
-Start the agent in CLI mode:
+Build the card synergy graph using NetworkX:
 
+python build_synergy_graph.py
+
+
+4. Testing Components
+
+Test metagame integrations:
+python test_metagame.py
+
+Test synergy detection:
+python test_synergy.py
+
+Test Monte Carlo simulation:
+python test_simulator.py
+
+
+5. Running the Agent
+
+The agent can run in two modes:
+
+**Interactive Mode:**
 python mtg_agent.py
+
+**Single Query Mode:**
+python mtg_agent.py "your question here"
+
+
+Example Queries:
+- "Find me cards that draw when they enter the battlefield"
+- "What are good cards for an Atraxa deck?"
+- "What's the best color pair in MKM draft?"
+- "Show me powerful Commander staples"
+
+
+How It Works
+
+The agent uses a LangGraph StateGraph workflow:
+
+1. Router: Classifies your query as Constructed (Commander) or Limited (Draft/Sealed)
+2. Oracle: Performs semantic card search using ChromaDB vector database
+3. Synergy: Analyzes card interactions using NetworkX graph
+4. Metagame: Fetches relevant statistics from EDHREC (Constructed) or 17Lands (Limited)
+5. Synthesizer: Combines all results into a comprehensive response
+
+All data is cached locally for offline usage and faster responses.
+
+The agent now provides:
+- Semantic card search
+- Card synergy recommendations
+- Combo detection
+- Deck building suggestions
+- Live metagame statistics
+- Monte Carlo simulation for deck testing
 
 
 Roadmap
 
 [x] Project Initialization
 
-[ ] Sprint 1: Scryfall Data & Vector DB
+[x] Sprint 1: Scryfall Data & Vector DB
 
-[ ] Sprint 2: EDHREC & 17Lands Integration
+[x] Sprint 2: EDHREC & 17Lands Integration
 
-[ ] Sprint 3: Synergy Graph Implementation
+[x] LangGraph Agent Implementation
 
-[ ] Sprint 4: Simulation Engine
+[x] Sprint 3: Synergy Graph Implementation
+
+[x] Sprint 4: Simulation Engine
+
+Features
+
+Data Layer:
+- Scryfall Oracle card database with semantic search (ChromaDB + TF-IDF)
+- EDHREC Commander metagame statistics with caching
+- 17Lands Limited format statistics (Draft/Sealed)
+
+Cognitive Layer:
+- NetworkX synergy graph for card interaction analysis
+- Monte Carlo simulation engine for deck testing
+- Mana curve analysis and optimization
+- Opening hand simulation with mulligan decisions
+- Goldfishing (turn-by-turn gameplay simulation)
+
+Agent Layer:
+- LangGraph StateGraph workflow orchestration
+- Intelligent query routing (Constructed vs Limited)
+- Multi-source data synthesis
+- Interactive and single-query CLI modes
 
 Collaborators
 

@@ -56,7 +56,7 @@ Roadmap
 
 [x] Project Initialization
 
-[ ] Sprint 1: Scryfall Data & Vector DB
+[x] Sprint 1: Scryfall Data & Vector DB
 
 [ ] Sprint 2: EDHREC & 17Lands Integration
 

@@ -14,7 +14,11 @@ def fetch_scryfall_data():
     This is the lightweight JSON containing gameplay-relevant data.
     """
     print("--- Contacting Scryfall API ---")
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> 061606e (adding ingest data and requirements)
     # 1. Get the download URI
     try:
         response = requests.get(SCRYFALL_BULK_URL)
@@ -31,6 +35,7 @@ def fetch_scryfall_data():
     try:
         data_response = requests.get(download_uri, stream=True)
         data_response.raise_for_status()
+<<<<<<< HEAD
 
         if not os.path.exists(DATA_DIR):
             os.makedirs(DATA_DIR)
@@ -41,6 +46,18 @@ def fetch_scryfall_data():
 
         print(f"Success! Data saved to {OUTPUT_FILE}")
 
+=======
+        
+        if not os.path.exists(DATA_DIR):
+            os.makedirs(DATA_DIR)
+            
+        with open(OUTPUT_FILE, 'wb') as f:
+            for chunk in data_response.iter_content(chunk_size=8192):
+                f.write(chunk)
+                
+        print(f"Success! Data saved to {OUTPUT_FILE}")
+        
+>>>>>>> 061606e (adding ingest data and requirements)
     except Exception as e:
         print(f"Error downloading bulk data: {e}")
 

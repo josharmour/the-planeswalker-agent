@@ -2,8 +2,10 @@
 
 import json
 import time
+import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from urllib.parse import urlencode
 import requests
 
 
@@ -270,20 +272,102 @@ class SeventeenLandsClient:
 
         print(f"Fetching color pair data for {expansion}...")
 
-        # This would typically fetch from a specific endpoint
-        # For now, return placeholder structure
-        color_pairs = [
-            {"colors": "WU", "name": "Azorius", "win_rate": 0.0},
-            {"colors": "UB", "name": "Dimir", "win_rate": 0.0},
-            {"colors": "BR", "name": "Rakdos", "win_rate": 0.0},
-            {"colors": "RG", "name": "Gruul", "win_rate": 0.0},
-            {"colors": "GW", "name": "Selesnya", "win_rate": 0.0},
-            {"colors": "WB", "name": "Orzhov", "win_rate": 0.0},
-            {"colors": "UR", "name": "Izzet", "win_rate": 0.0},
-            {"colors": "BG", "name": "Golgari", "win_rate": 0.0},
-            {"colors": "RW", "name": "Boros", "win_rate": 0.0},
-            {"colors": "GU", "name": "Simic", "win_rate": 0.0},
-        ]
+        # Mapping of color codes to guild names
+        guild_names = {
+            "WU": "Azorius",
+            "UB": "Dimir",
+            "BR": "Rakdos",
+            "RG": "Gruul",
+            "GW": "Selesnya",
+            "WG": "Selesnya",  # API sometimes returns WG
+            "WB": "Orzhov",
+            "UR": "Izzet",
+            "BG": "Golgari",
+            "RW": "Boros",
+            "WR": "Boros",     # API sometimes returns WR
+            "GU": "Simic",
+            "UG": "Simic",     # API sometimes returns UG
+        }
+
+        # Fetch from 17Lands API
+        url = f"{self.WEB_BASE_URL}/color_ratings/data"
+
+        # Use a safe start date that covers recent history
+        start_date = "2019-01-01"
+        end_date = datetime.date.today().strftime("%Y-%m-%d")
+
+        params = {
+            "expansion": expansion,
+            "event_type": format_type,
+            "start_date": start_date,
+            "end_date": end_date,
+            "combine_splash": "false"
+        }
+
+        color_pairs = []
+
+        try:
+            # Use safe URL construction
+            query_string = urlencode(params)
+            response = self._retry_request(f"{url}?{query_string}")
+
+            try:
+                raw_data = response.json()
+            except json.JSONDecodeError:
+                print("Warning: Response not in JSON format")
+                raw_data = []
+
+            for item in raw_data:
+                # Filter out summaries and check for 2-color pairs
+                if item.get("is_summary"):
+                    continue
+
+                colors = item.get("short_name")
+
+                # Check if this is one of our guild pairs
+                if colors in guild_names:
+                    wins = item.get("wins", 0)
+                    games = item.get("games", 0)
+
+                    win_rate = (wins / games) if games > 0 else 0.0
+
+                    # Normalize color code to standard (e.g., WG -> GW) if needed
+                    canonical_colors = {
+                        "WG": "GW",
+                        "WR": "RW",
+                        "UG": "GU"
+                    }.get(colors, colors)
+
+                    color_pairs.append({
+                        "colors": canonical_colors,
+                        "name": guild_names[colors],
+                        "win_rate": win_rate,
+                        "wins": wins,
+                        "games": games
+                    })
+
+        except Exception as e:
+            print(f"Error fetching color pair data from API: {e}")
+            # Return empty list or fall back to previous behavior if needed,
+            # but for now we return what we found (or empty)
+
+        # If API fails or returns no data, we might want to return the structure with 0s
+        # But let's only do that if we got nothing
+        if not color_pairs:
+            # Use unique canonical pairs for fallback to avoid duplicates
+            unique_pairs = {}
+            for code, name in guild_names.items():
+                canonical = {
+                    "WG": "GW",
+                    "WR": "RW",
+                    "UG": "GU"
+                }.get(code, code)
+                unique_pairs[canonical] = name
+
+            color_pairs = [
+                {"colors": code, "name": name, "win_rate": 0.0}
+                for code, name in unique_pairs.items()
+            ]
 
         data = {
             "color_pairs": color_pairs,

@@ -60,6 +60,9 @@ python test_metagame.py
 Test synergy detection:
 python test_synergy.py
 
+Test Monte Carlo simulation:
+python test_simulator.py
+
 
 5. Running the Agent
 
@@ -97,6 +100,7 @@ The agent now provides:
 - Combo detection
 - Deck building suggestions
 - Live metagame statistics
+- Monte Carlo simulation for deck testing
 
 
 Roadmap
@@ -111,7 +115,27 @@ Roadmap
 
 [x] Sprint 3: Synergy Graph Implementation
 
-[ ] Sprint 4: Simulation Engine
+[x] Sprint 4: Simulation Engine
+
+Features
+
+Data Layer:
+- Scryfall Oracle card database with semantic search (ChromaDB + TF-IDF)
+- EDHREC Commander metagame statistics with caching
+- 17Lands Limited format statistics (Draft/Sealed)
+
+Cognitive Layer:
+- NetworkX synergy graph for card interaction analysis
+- Monte Carlo simulation engine for deck testing
+- Mana curve analysis and optimization
+- Opening hand simulation with mulligan decisions
+- Goldfishing (turn-by-turn gameplay simulation)
+
+Agent Layer:
+- LangGraph StateGraph workflow orchestration
+- Intelligent query routing (Constructed vs Limited)
+- Multi-source data synthesis
+- Interactive and single-query CLI modes
 
 Collaborators
 

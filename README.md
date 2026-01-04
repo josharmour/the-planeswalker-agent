@@ -54,9 +54,32 @@ python test_metagame.py
 
 4. Running the Agent
 
-Start the agent in CLI mode:
+The agent can run in two modes:
 
+**Interactive Mode:**
 python mtg_agent.py
+
+**Single Query Mode:**
+python mtg_agent.py "your question here"
+
+
+Example Queries:
+- "Find me cards that draw when they enter the battlefield"
+- "What are good cards for an Atraxa deck?"
+- "What's the best color pair in MKM draft?"
+- "Show me powerful Commander staples"
+
+
+How It Works
+
+The agent uses a LangGraph StateGraph workflow:
+
+1. Router: Classifies your query as Constructed (Commander) or Limited (Draft/Sealed)
+2. Oracle: Performs semantic card search using ChromaDB vector database
+3. Metagame: Fetches relevant statistics from EDHREC (Constructed) or 17Lands (Limited)
+4. Synthesizer: Combines all results into a comprehensive response
+
+All data is cached locally for offline usage and faster responses.
 
 
 Roadmap
@@ -66,6 +89,8 @@ Roadmap
 [x] Sprint 1: Scryfall Data & Vector DB
 
 [x] Sprint 2: EDHREC & 17Lands Integration
+
+[x] LangGraph Agent Implementation
 
 [ ] Sprint 3: Synergy Graph Implementation
 

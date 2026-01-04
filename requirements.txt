@@ -1,1 +1,11 @@
+langchain
+langgraph
+langchain-anthropic
+langchain-openai
+chromadb
+networkx
+requests
+pandas
+scikit-learn
+mtg-sdk
 python-dotenv

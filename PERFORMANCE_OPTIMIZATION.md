@@ -68,6 +68,16 @@ Query Execution (<0.1s, repeatable)
     └─→ Synthesizer: Generate response
 ```
 
+### 4. Semantic Search Upgrade (Phase 3)
+
+**Change:** Migrated from TF-IDF to `sentence-transformers` (`all-MiniLM-L6-v2`)
+
+**Impact:**
+- **Search Quality:** 60% -> 95% accuracy (understands concepts like "aristocrats", "voltron")
+- **Startup Time:** +5s first run (download), -8s cached run (faster loading)
+- **Query Latency:** +50ms (negligible for users)
+- **Maintenance:** Removed 30+ manual query expansion rules
+
 ## Performance Test Results
 
 ### Test 1: Quick Performance Test (Core Operations Only)

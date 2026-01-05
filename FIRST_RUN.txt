@@ -9,7 +9,7 @@ IMPORTANT: NO TRAINING REQUIRED
 ================================================================================
 
 The Planeswalker Agent uses training-free approaches:
-- TF-IDF embeddings (computed directly from card data)
+- Pre-trained Sentence Transformer embeddings (downloaded automatically)
 - NetworkX graph (built from deterministic rules)
 - Monte Carlo simulation (pure algorithmic)
 - Rule-based systems (no neural networks)
@@ -39,7 +39,7 @@ STEP 1: CLONE AND SETUP (5 minutes)
    pip install -r requirements.txt
 
 
-STEP 2: DOWNLOAD CARD DATABASE (2-3 minutes)
+STEP 2: DOWNLOAD CARD DATABASE (5-10 minutes)
 ================================================================================
 
 Download all ~25,000 Oracle cards from Scryfall:
@@ -48,10 +48,10 @@ python ingest_data.py --force-download
 
 This will:
 - Download the complete Scryfall Oracle database (~80-100 MB)
-- Build ChromaDB vector store with TF-IDF embeddings
+- Download 'all-MiniLM-L6-v2' model (~90 MB)
+- Build ChromaDB vector store with semantic embeddings
 - Create data/oracle-cards.json
 - Create data/chroma_db/ directory
-- Create data/vectorizer.pkl
 
 Expected output:
   Fetching bulk data list from Scryfall...
@@ -148,7 +148,6 @@ After setup, your data/ directory will contain:
 
 /data/
   oracle-cards.json       # Full Scryfall database (~80-100 MB)
-  vectorizer.pkl          # TF-IDF model (auto-generated)
   chroma_db/              # Vector embeddings for semantic search
   synergy_graph.json      # Card relationship graph (~10-50 MB)
   edhrec_cache/           # Cached metagame data (auto-populated)
@@ -192,20 +191,6 @@ To keep card data current, set up a weekly cron job (Linux/Mac):
 
 This refreshes data every Sunday at midnight.
 
-
-OPTIONAL: BETTER EMBEDDINGS
-================================================================================
-
-For improved semantic search, you can upgrade from TF-IDF to sentence-transformers:
-
-1. Install sentence-transformers:
-   pip install sentence-transformers
-
-2. Modify src/data/chroma.py to use:
-   from sentence_transformers import SentenceTransformer
-   model = SentenceTransformer('all-MiniLM-L6-v2')
-
-This downloads a pre-trained model (~80MB) but requires NO training.
 
 
 OPTIONAL: DEPLOY AS API
@@ -315,7 +300,7 @@ Technologies:
 - LangGraph (agent orchestration)
 - ChromaDB (vector database)
 - NetworkX (graph analysis)
-- scikit-learn (TF-IDF embeddings)
+- sentence-transformers (semantic embeddings)
 
 ================================================================================
 Ready to solve the metagame? Run: python mtg_agent.py

@@ -1,56 +1,22 @@
-"""ChromaDB vector store for semantic card search."""
+"""ChromaDB vector store for semantic card search using sentence-transformers."""
 
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import chromadb
 from chromadb.config import Settings
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sentence_transformers import SentenceTransformer
 import numpy as np
-import pickle
-
-
-class TFIDFEmbeddingFunction:
-    """Simple TF-IDF based embedding function that runs completely locally."""
-
-    def __init__(self):
-        self.name = "tfidf"
-        self.vectorizer = TfidfVectorizer(
-            max_features=384,  # Match typical embedding dimension
-            stop_words='english',
-            ngram_range=(1, 2)
-        )
-        self.is_fitted = False
-        self.documents_cache = []
-
-    def __call__(self, input: List[str]) -> List[List[float]]:
-        """Generate embeddings for input texts."""
-        # Cache documents for fitting
-        self.documents_cache.extend(input)
-
-        if not self.is_fitted and self.documents_cache:
-            # Fit on first batch
-            self.vectorizer.fit(self.documents_cache)
-            self.is_fitted = True
-
-        if self.is_fitted:
-            # Transform documents to vectors
-            vectors = self.vectorizer.transform(input).toarray()
-        else:
-            # Return zero vectors if not fitted yet
-            vectors = np.zeros((len(input), 384))
-
-        return vectors.tolist()
 
 
 class VectorStore:
-    """Manages card embeddings and semantic search using ChromaDB."""
+    """Manages card embeddings and semantic search using ChromaDB and sentence-transformers."""
 
     PERSIST_DIR = Path("data/chroma_db")
     COLLECTION_NAME = "mtg_cards"
-    VECTORIZER_PATH = Path("data/vectorizer.pkl")
+    MODEL_NAME = "all-MiniLM-L6-v2"  # 90MB, fast, excellent quality
 
     def __init__(self):
-        """Initialize ChromaDB client and collection."""
+        """Initialize ChromaDB client and sentence-transformer model."""
         self.PERSIST_DIR.mkdir(parents=True, exist_ok=True)
 
         # Initialize ChromaDB with persistence
@@ -62,24 +28,15 @@ class VectorStore:
             )
         )
 
-        # Load or initialize TF-IDF vectorizer
-        if self.VECTORIZER_PATH.exists():
-            print("Loading saved vectorizer...")
-            with open(self.VECTORIZER_PATH, 'rb') as f:
-                self.vectorizer = pickle.load(f)
-            self.is_vectorizer_fitted = True
-        else:
-            self.vectorizer = TfidfVectorizer(
-                max_features=384,
-                stop_words='english',
-                ngram_range=(1, 2)
-            )
-            self.is_vectorizer_fitted = False
+        # Load sentence-transformer model
+        print(f"Loading sentence-transformer model '{self.MODEL_NAME}'...")
+        self.model = SentenceTransformer(self.MODEL_NAME)
+        print("Model loaded successfully")
 
         # Get or create collection
         self.collection = self.client.get_or_create_collection(
             name=self.COLLECTION_NAME,
-            metadata={"description": "Magic: The Gathering card embeddings", "hnsw:space": "cosine"}
+            metadata={"description": "Magic: The Gathering card embeddings (sentence-transformers)", "hnsw:space": "cosine"}
         )
 
     def _prepare_card_text(self, card: Dict[str, Any]) -> str:
@@ -151,139 +108,68 @@ class VectorStore:
 
         return metadata
 
-    def upsert_cards(self, cards: List[Dict[str, Any]], batch_size: int = 1000) -> None:
+    def upsert_cards(self, cards: List[Dict[str, Any]], batch_size: int = 32) -> None:
         """
-        Insert or update cards in the vector database.
+        Insert or update cards in the vector database using sentence-transformers.
 
         Args:
             cards: List of card dictionaries from Scryfall
-            batch_size: Number of cards to process per batch
+            batch_size: Number of cards to encode per batch (32 is optimal for CPU)
         """
         total = len(cards)
-        print(f"Upserting {total} cards into ChromaDB...")
+        print(f"Upserting {total} cards into ChromaDB with sentence-transformers...")
 
-        # First pass: collect all documents for fitting vectorizer
-        all_docs = []
+        # Prepare all card data first
+        card_data = []
         for card in cards:
             if card.get("id"):
-                all_docs.append(self._prepare_card_text(card))
+                card_data.append({
+                    "id": card["id"],
+                    "text": self._prepare_card_text(card),
+                    "metadata": self._prepare_metadata(card)
+                })
 
-        # Fit vectorizer on all documents
-        print("  Fitting TF-IDF vectorizer on card texts...")
-        self.vectorizer.fit(all_docs)
-        self.is_vectorizer_fitted = True
-
-        # Save vectorizer for later use
-        print("  Saving vectorizer...")
-        with open(self.VECTORIZER_PATH, 'wb') as f:
-            pickle.dump(self.vectorizer, f)
-
-        # Second pass: process and add cards in batches
-        for i in range(0, total, batch_size):
-            batch = cards[i:i + batch_size]
+        # Process in batches
+        for i in range(0, len(card_data), batch_size):
+            batch = card_data[i:i + batch_size]
             batch_num = i // batch_size + 1
-            total_batches = (total + batch_size - 1) // batch_size
+            total_batches = (len(card_data) + batch_size - 1) // batch_size
+
+            # Extract texts for encoding
+            texts = [item["text"] for item in batch]
+
+            # Encode batch using sentence-transformers
+            print(f"  Encoding batch {batch_num}/{total_batches}...")
+            embeddings = self.model.encode(
+                texts,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+                batch_size=batch_size
+            )
 
             # Prepare data for ChromaDB
-            ids = []
-            documents = []
-            metadatas = []
-            embeddings = []
+            ids = [item["id"] for item in batch]
+            documents = texts
+            metadatas = [item["metadata"] for item in batch]
+            embeddings_list = [emb.tolist() for emb in embeddings]
 
-            for card in batch:
-                # Use Scryfall ID as unique identifier
-                card_id = card.get("id")
-                if not card_id:
-                    continue
-
-                doc_text = self._prepare_card_text(card)
-                ids.append(card_id)
-                documents.append(doc_text)
-                metadatas.append(self._prepare_metadata(card))
-
-                # Compute embedding locally
-                embedding = self.vectorizer.transform([doc_text]).toarray()[0].tolist()
-                embeddings.append(embedding)
-
-            # Add batch with pre-computed embeddings
-            if ids:
-                self.collection.add(
-                    ids=ids,
-                    documents=documents,
-                    embeddings=embeddings,
-                    metadatas=metadatas
-                )
+            # Add batch to ChromaDB
+            self.collection.add(
+                ids=ids,
+                documents=documents,
+                embeddings=embeddings_list,
+                metadatas=metadatas
+            )
 
             print(f"  Batch {batch_num}/{total_batches} complete ({len(ids)} cards)")
 
-        print(f"✓ Upserted {total} cards successfully")
-
-    def _preprocess_query(self, query: str) -> str:
-        """
-        Preprocess user query to match card database terminology.
-
-        Args:
-            query: Raw user query
-
-        Returns:
-            Preprocessed query text optimized for TF-IDF matching
-        """
-        # Convert to lowercase for processing
-        query = query.lower()
-
-        # Common MTG query expansions to improve TF-IDF matching
-        # Maps user terms to database terms
-        expansions = {
-            'counterspell': 'counter target spell instant',
-            'counterspells': 'counter target spell instant',
-            'removal': 'destroy target creature exile',
-            'board wipe': 'destroy all creatures',
-            'boardwipe': 'destroy all creatures',
-            'wipe': 'destroy all',
-            'ramp': 'search basic land forest plains',
-            'draw': 'draw card',
-            'card draw': 'draw card',
-            'lifegain': 'gain life',
-            'life gain': 'gain life',
-            'tutor': 'search library',
-            'fetch': 'search library',
-            'mill': 'library graveyard',
-            'graveyard recursion': 'return graveyard battlefield hand',
-            'recursion': 'return graveyard',
-            'flicker': 'exile return battlefield',
-            'blink': 'exile return battlefield',
-            'token': 'create token creature',
-            'tokens': 'create token creature',
-            'etb': 'enters battlefield',
-            'enter the battlefield': 'enters battlefield',
-            'enters the battlefield': 'enters battlefield',
-            'ltb': 'leaves battlefield',
-            'leaves the battlefield': 'leaves battlefield',
-            'combat trick': 'instant target creature',
-            'pump spell': 'target creature gets',
-            'evasion': 'unblockable flying',
-            'cantrip': 'draw card instant sorcery',
-            'planeswalker': 'planeswalker loyalty',
-            'tribal': 'creature type',
-            'atraxa': 'proliferate counter planeswalker',
-            'proliferate': 'proliferate counter',
-            'commander staples': 'legendary creature powerful',
-            'staples': 'powerful',
-            'powerful': 'legendary rare mythic',
-        }
-
-        # Apply expansions (check for exact phrase matches first)
-        for term, expansion in expansions.items():
-            if term in query:
-                query = query.replace(term, expansion)
-
-        # Keep the original if it's already good (contains card type keywords)
-        # This helps queries like "Show me powerful Commander staples" stay broad
-        return query
+        print(f"✓ Upserted {total} cards successfully with semantic embeddings")
 
     def query_similar(self, query: str, n_results: int = 5) -> Dict[str, Any]:
         """
-        Search for cards similar to the query.
+        Search for cards similar to the query using semantic understanding.
+
+        No preprocessing needed - sentence-transformers understands natural language.
 
         Args:
             query: Natural language search query
@@ -292,18 +178,16 @@ class VectorStore:
         Returns:
             Dictionary with 'ids', 'documents', 'metadatas' keys
         """
-        if not self.is_vectorizer_fitted:
-            raise RuntimeError("Vectorizer not fitted. Please run upsert_cards first.")
+        # Encode query directly - no preprocessing needed!
+        # Model understands: "counterspells", "Atraxa deck", "sacrifice outlets", etc.
+        query_embedding = self.model.encode(
+            query,
+            convert_to_numpy=True
+        )
 
-        # Preprocess query to improve matching
-        processed_query = self._preprocess_query(query)
-
-        # Compute query embedding locally
-        query_embedding = self.vectorizer.transform([processed_query]).toarray()[0].tolist()
-
-        # Query with pre-computed embedding
+        # Search with semantic embedding
         results = self.collection.query(
-            query_embeddings=[query_embedding],
+            query_embeddings=[query_embedding.tolist()],
             n_results=n_results
         )
 
@@ -327,15 +211,15 @@ def get_vector_store() -> VectorStore:
     """
     Get or create the singleton VectorStore instance.
 
-    This avoids reinitializing ChromaDB on every query, which takes ~30+ seconds.
-    The first call will initialize the store, subsequent calls return the cached instance.
+    This avoids reinitializing the model and ChromaDB on every query.
+    The first call will initialize the store (2-3s), subsequent calls are instant.
 
     Returns:
         Singleton VectorStore instance
     """
     global _vector_store_instance
     if _vector_store_instance is None:
-        print("[VectorStore] Initializing singleton instance...")
+        print("[VectorStore] Initializing singleton instance with sentence-transformers...")
         _vector_store_instance = VectorStore()
         print(f"[VectorStore] Ready ({_vector_store_instance.count()} cards indexed)")
     return _vector_store_instance

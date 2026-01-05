@@ -1,4 +1,4 @@
-"""EDHREC integration for Commander metagame statistics."""
+"""EDHREC integration for Commander metagame statistics using pyedhrec."""
 
 import json
 import time
@@ -6,14 +6,13 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 import requests
 from bs4 import BeautifulSoup
+from pyedhrec import EDHRec
 
 
 class EDHRECClient:
     """
     Client for accessing EDHREC Commander metagame data.
-
-    Note: EDHREC does not provide an official API. This client scrapes
-    public pages and should be used respectfully with appropriate caching.
+    Uses pyedhrec for detailed commander data and custom scraping for trending commanders.
     """
 
     BASE_URL = "https://edhrec.com"
@@ -23,6 +22,7 @@ class EDHRECClient:
     def __init__(self):
         """Initialize EDHREC client and ensure cache directory exists."""
         self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        self.edhrec_lib = EDHRec()
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'PlaneswalkerAgent/1.0 (Educational MTG AI Project)'
@@ -38,370 +38,179 @@ class EDHRECClient:
         """Check if cached data is still valid."""
         if not cache_path.exists():
             return False
-
         age = time.time() - cache_path.stat().st_mtime
         return age < self.CACHE_DURATION
 
     def _read_cache(self, key: str) -> Optional[Dict[str, Any]]:
         """Read data from cache if available and valid."""
         cache_path = self._get_cache_path(key)
-
         if self._is_cache_valid(cache_path):
             try:
                 with open(cache_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except Exception as e:
                 print(f"Warning: Failed to read cache for {key}: {e}")
-
         return None
 
     def _write_cache(self, key: str, data: Dict[str, Any]) -> None:
         """Write data to cache."""
         cache_path = self._get_cache_path(key)
-
         try:
             with open(cache_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
             print(f"Warning: Failed to write cache for {key}: {e}")
 
-    def _retry_request(self, url: str, max_retries: int = 5) -> requests.Response:
-        """
-        Make HTTP request with exponential backoff retry logic.
-
-        Args:
-            url: The URL to fetch
-            max_retries: Maximum number of retry attempts
-
-        Returns:
-            The successful response
-
-        Raises:
-            Exception: If all retries fail
-        """
-        for attempt in range(max_retries):
-            try:
-                response = self.session.get(url, timeout=30)
-                response.raise_for_status()
-                return response
-            except requests.RequestException as e:
-                if attempt == max_retries - 1:
-                    raise Exception(f"Failed to fetch {url} after {max_retries} attempts: {e}")
-
-                wait_time = 2 ** attempt  # Exponential backoff
-                print(f"Request failed (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time}s...")
-                time.sleep(wait_time)
-
     def get_commander_page(self, commander_name: str, force_refresh: bool = False) -> Dict[str, Any]:
         """
-        Fetch EDHREC page data for a specific commander.
-
-        Args:
-            commander_name: Name of the commander (will be URL-encoded)
-            force_refresh: If True, bypass cache
-
-        Returns:
-            Dictionary containing commander page data
+        Fetch EDHREC page data for a specific commander using pyedhrec.
         """
         cache_key = f"commander_{commander_name.lower().replace(' ', '-')}"
 
-        # Check cache first
         if not force_refresh:
             cached_data = self._read_cache(cache_key)
             if cached_data:
                 print(f"Using cached data for {commander_name}")
                 return cached_data
 
-        # Build URL
-        url_name = commander_name.lower().replace(' ', '-').replace(',', '')
-        url = f"{self.BASE_URL}/commanders/{url_name}"
-
-        print(f"Fetching EDHREC data for {commander_name}...")
+        print(f"Fetching EDHREC data for {commander_name} via pyedhrec...")
 
         try:
-            response = self._retry_request(url)
-            soup = BeautifulSoup(response.text, 'html.parser')
+            # Use pyedhrec to get the raw data structure
+            raw_data = self.edhrec_lib.get_commander_data(commander_name)
+            
+            if not raw_data:
+                raise Exception(f"No data returned for {commander_name}")
 
-            # Try to extract rich data from NEXT_DATA
-            next_data = self._extract_next_data(soup)
+            # Extract relevant parts from the complex structure
+            container = raw_data.get("container", {})
+            json_dict = container.get("json_dict", {})
+            
+            data = {
+                "commander": commander_name,
+                "url": f"{self.BASE_URL}/commanders/{commander_name.lower().replace(' ', '-').replace(',', '')}",
+                "fetched_at": time.time(),
+                "cards": self._parse_cardlists(json_dict.get("cardlists", [])),
+                "themes": self._parse_themes(raw_data.get("panels", {}).get("taglinks", [])),
+                "meta": self._parse_meta(json_dict.get("card", {}))
+            }
 
-            if next_data:
-                # Use the rich structured data
-                data = {
-                    "commander": commander_name,
-                    "url": url,
-                    "fetched_at": time.time(),
-                    "cards": self._extract_card_recommendations_from_json(next_data),
-                    "themes": self._extract_themes_from_json(next_data),
-                    # Additional metadata
-                    "meta": self._extract_metadata_from_json(next_data)
-                }
-            else:
-                # Fallback to scraping (simplified example)
-                print(f"Warning: Could not find structured JSON data for {commander_name}, falling back to basic scraping.")
-                data = {
-                    "commander": commander_name,
-                    "url": url,
-                    "fetched_at": time.time(),
-                    "cards": self._extract_card_recommendations(soup),
-                    "themes": self._extract_themes(soup),
-                    "meta": {}
-                }
-
-            # Cache the result
             self._write_cache(cache_key, data)
-
             return data
 
         except Exception as e:
             print(f"Error fetching EDHREC data for {commander_name}: {e}")
             return {
                 "commander": commander_name,
-                "error": str(e),
-                "url": url
+                "error": str(e)
             }
 
-    def _extract_next_data(self, soup: BeautifulSoup) -> Optional[Dict[str, Any]]:
-        """Extract structured JSON data from Next.js hydration script."""
-        script_tag = soup.find("script", id="__NEXT_DATA__", type="application/json")
-        if script_tag and script_tag.string:
-            try:
-                return json.loads(script_tag.string)
-            except json.JSONDecodeError as e:
-                print(f"Error parsing NEXT_DATA JSON: {e}")
-        return None
-
-    def _extract_metadata_from_json(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract metadata from EDHREC JSON data."""
-        meta = {}
-        try:
-            page_props = data.get("props", {}).get("pageProps", {})
-            data_section = page_props.get("data", {})
-
-            # Extract commander stats
-            container = data_section.get("container", {})
-            if not container:
-                container = page_props.get("container", {})
-
-            json_dict = container.get("json_dict", {})
-            card_info = json_dict.get("card", {})
-
-            if card_info:
-                meta["rank"] = card_info.get("rank")
-                meta["total_decks"] = card_info.get("num_decks")
-                meta["salt_score"] = card_info.get("salt")
-                meta["is_commander"] = card_info.get("is_commander")
-
-            # Extract distribution stats
-            if "avg_price" in data_section:
-                meta["avg_price"] = data_section.get("avg_price")
-
-            # Mana curve
-            panels = data_section.get("panels", {})
-            if "mana_curve" in panels:
-                meta["mana_curve"] = panels.get("mana_curve")
-
-        except Exception as e:
-            print(f"Error extracting metadata: {e}")
-
-        return meta
-
-    def _extract_card_recommendations_from_json(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract card recommendations from EDHREC JSON data."""
+    def _parse_cardlists(self, cardlists: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Parse cardlists from raw EDHREC JSON."""
         cards = []
-        try:
-            page_props = data.get("props", {}).get("pageProps", {})
-            data_section = page_props.get("data", {})
-
-            container = data_section.get("container", {})
-            if not container:
-                container = page_props.get("container", {})
-
-            json_dict = container.get("json_dict", {})
-            cardlists = json_dict.get("cardlists", [])
-
-            for cardlist in cardlists:
-                category = cardlist.get("header", "Unknown")
-                # Skip new cards section as it's often less relevant for synergy analysis
-                if category == "New Cards":
-                    continue
-
-                for card in cardlist.get("cardviews", []):
-                    card_data = {
-                        "name": card.get("name"),
-                        "synergy": card.get("synergy"),
-                        "inclusion": card.get("inclusion"),
-                        "num_decks": card.get("num_decks"),
-                        "potential_decks": card.get("potential_decks"),
-                        "category": category,
-                        "url": f"{self.BASE_URL}{card.get('url', '')}"
-                    }
-                    cards.append(card_data)
-
-        except Exception as e:
-            print(f"Error extracting cards from JSON: {e}")
-
-        return cards
-
-    def _extract_themes_from_json(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract deck themes from EDHREC JSON data."""
-        themes = []
-        try:
-            page_props = data.get("props", {}).get("pageProps", {})
-            data_section = page_props.get("data", {})
-
-            # Themes are often in panels -> taglinks
-            panels = data_section.get("panels", {})
-            taglinks = panels.get("taglinks", [])
-
-            # Sometimes directly in data
-            if not taglinks:
-                taglinks = data_section.get("taglinks", [])
-
-            for tag in taglinks:
-                themes.append({
-                    "name": tag.get("value"),
-                    "count": tag.get("count"),
-                    "slug": tag.get("slug"),
-                    "url": f"{self.BASE_URL}/themes/{tag.get('slug', '')}"
-                })
-
-        except Exception as e:
-            print(f"Error extracting themes from JSON: {e}")
-
-        return themes
-
-    def _extract_card_recommendations(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
-        """Extract card recommendations from EDHREC page (Legacy fallback)."""
-        cards = []
-
-        # EDHREC uses various card panel structures
-        # This is a simplified extraction - real implementation would be more robust
-        card_panels = soup.find_all('div', class_='card-panel') or soup.find_all('a', class_='card')
-
-        for panel in card_panels[:20]:  # Limit to top 20
-            card_name = panel.get('data-name') or panel.get_text(strip=True)
-            if card_name:
+        for cl in cardlists:
+            category = cl.get("header", "Unknown")
+            if category == "New Cards":
+                continue
+            for card in cl.get("cardviews", []):
                 cards.append({
-                    "name": card_name,
-                    "synergy": "high"  # Placeholder - would extract actual synergy score
+                    "name": card.get("name"),
+                    "synergy": card.get("synergy"),
+                    "inclusion": card.get("inclusion"),
+                    "num_decks": card.get("num_decks"),
+                    "category": category
                 })
-
         return cards
 
-    def _extract_themes(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
-        """Extract deck themes from EDHREC page (Legacy fallback)."""
-        themes = []
+    def _parse_themes(self, taglinks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Parse themes from raw EDHREC JSON."""
+        return [
+            {
+                "name": tag.get("value"),
+                "slug": tag.get("slug"),
+                "url": f"{self.BASE_URL}/themes/{tag.get('slug', '')}"
+            }
+            for tag in taglinks
+        ]
 
-        # Extract theme information
-        theme_sections = soup.find_all('div', class_='theme') or soup.find_all('a', href=lambda x: x and '/themes/' in x if x else False)
-
-        for theme in theme_sections[:10]:  # Limit to top 10
-            theme_name = theme.get_text(strip=True)
-            if theme_name:
-                themes.append({
-                    "name": theme_name,
-                    "url": f"{self.BASE_URL}{theme.get('href')}" if theme.get('href') else ""
-                })
-
-        return themes
+    def _parse_meta(self, card_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse metadata from raw EDHREC JSON."""
+        return {
+            "rank": card_info.get("rank"),
+            "total_decks": card_info.get("num_decks"),
+            "salt_score": card_info.get("salt")
+        }
 
     def get_top_commanders(self, timeframe: str = "week", force_refresh: bool = False) -> List[Dict[str, Any]]:
         """
-        Get list of top commanders for a given timeframe.
-
-        Args:
-            timeframe: Time period ('week', 'month', 'year', '2years')
-            force_refresh: If True, bypass cache
-
-        Returns:
-            List of commander data dictionaries
+        Get list of top commanders using structured data from the page.
         """
         cache_key = f"top_commanders_{timeframe}"
 
-        # Check cache first
         if not force_refresh:
             cached_data = self._read_cache(cache_key)
             if cached_data:
                 print(f"Using cached top commanders for {timeframe}")
                 return cached_data.get("commanders", [])
 
-        # EDHREC changed their URL structure - now uses /commanders (default: past 2 years)
-        # Individual timeframes are no longer easily accessible via separate URLs
-        # Using the main commanders page
         url = f"{self.BASE_URL}/commanders"
-
-        print(f"Fetching top commanders from EDHREC...")
+        print(f"Fetching top commanders from {url}...")
 
         try:
-            response = self._retry_request(url)
+            response = self.session.get(url, timeout=30)
+            response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
 
+            # Extract __NEXT_DATA__
+            script_tag = soup.find("script", id="__NEXT_DATA__", type="application/json")
+            if not script_tag:
+                print("Warning: Could not find __NEXT_DATA__ on commanders page.")
+                return []
+
+            next_data = json.loads(script_tag.string)
+            
             commanders = []
-
-            # EDHREC uses card panels with specific data attributes
-            # Try multiple selectors to find commander cards
-            card_panels = (
-                soup.find_all('div', class_='_card_1dwe9_1') or
-                soup.find_all('a', attrs={'data-card-name': True}) or
-                soup.find_all('div', class_='Card_card') or
-                soup.find_all('a', href=lambda x: x and '/commanders/' in x if x else False)
-            )
-
             seen_names = set()
-            for card in card_panels[:100]:  # Check more to filter duplicates
-                # Try different ways to extract commander name
-                name = (
-                    card.get('data-card-name') or
-                    card.get('data-name') or
-                    card.find('span', class_='card-name')
-                )
 
-                if isinstance(name, str):
-                    name = name.strip()
-                elif name:  # It's a tag
-                    name = name.get_text(strip=True)
+            # The structure for top commanders is usually in props.pageProps.data.container.json_dict.cardlists
+            try:
+                data_section = next_data.get("props", {}).get("pageProps", {}).get("data", {})
+                container = data_section.get("container", {})
+                json_dict = container.get("json_dict", {})
+                cardlists = json_dict.get("cardlists", [])
 
-                # Also check href for commander names
-                if not name and card.get('href'):
-                    href = card.get('href')
-                    if '/commanders/' in href:
-                        # Extract name from URL like /commanders/atraxa-praetors-voice
-                        name_slug = href.split('/commanders/')[-1].split('/')[0]
-                        name = name_slug.replace('-', ' ').title()
-
-                if name and name not in seen_names:
-                    commanders.append({
-                        "name": name,
-                        "timeframe": "past2years"  # Current EDHREC default
-                    })
-                    seen_names.add(name)
-
-            # If we didn't find any with the above, fall back to simpler extraction
-            if not commanders:
-                links = soup.find_all('a', href=lambda x: x and '/commanders/' in x if x else False)
-                for link in links[:50]:
-                    href = link.get('href', '')
-                    if '/commanders/' in href and not any(x in href for x in ['?', '#', 'theme', 'partner']):
-                        name_slug = href.split('/commanders/')[-1].split('/')[0]
-                        name = name_slug.replace('-', ' ').title()
+                for cl in cardlists:
+                    # We want actual commanders, usually in "Top Commanders" list
+                    for card in cl.get("cardviews", []):
+                        name = card.get("name")
                         if name and name not in seen_names:
                             commanders.append({
                                 "name": name,
-                                "timeframe": "past2years"
+                                "url": f"{self.BASE_URL}{card.get('url', '')}"
                             })
                             seen_names.add(name)
+            except Exception as e:
+                print(f"Error parsing NEXT_DATA for commanders: {e}")
+
+            # Fallback if NEXT_DATA parsing failed
+            if not commanders:
+                print("Falling back to simple link scraping...")
+                links = soup.find_all('a', href=lambda x: x and '/commanders/' in x if x else False)
+                for link in links:
+                    href = link.get('href', '')
+                    slug = href.split('/commanders/')[-1].split('/')[0]
+                    if not slug or len(slug) <= 2 or any(x in slug for x in ['?', '#', 'theme', 'partner']):
+                        continue
+                    name = slug.replace('-', ' ').title()
+                    if name not in seen_names:
+                        commanders.append({"name": name})
+                        seen_names.add(name)
 
             data = {
-                "commanders": commanders[:50],  # Limit to top 50
-                "timeframe": "past2years",
+                "commanders": commanders[:50],
                 "fetched_at": time.time()
             }
-
-            # Cache the result
             self._write_cache(cache_key, data)
-
-            print(f"Found {len(commanders[:50])} commanders")
             return commanders[:50]
 
         except Exception as e:

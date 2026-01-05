@@ -120,7 +120,7 @@ Roadmap
 Features
 
 Data Layer:
-- Scryfall Oracle card database with semantic search (ChromaDB + TF-IDF)
+- Scryfall Oracle card database with semantic search (ChromaDB + sentence-transformers)
 - EDHREC Commander metagame statistics with caching
 - 17Lands Limited format statistics (Draft/Sealed)
 

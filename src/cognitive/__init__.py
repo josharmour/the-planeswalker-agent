@@ -508,3 +508,29 @@ class SynergyGraph:
             ),
             "density": nx.density(self.graph)
         }
+
+
+# Singleton instance for performance
+_synergy_graph_instance: Optional[SynergyGraph] = None
+
+
+def get_synergy_graph() -> Optional[SynergyGraph]:
+    """
+    Get or create the singleton SynergyGraph instance.
+
+    This avoids reloading the 236MB graph JSON on every query, which takes ~15 seconds.
+    The first call will load the graph, subsequent calls return the cached instance.
+
+    Returns:
+        Singleton SynergyGraph instance, or None if graph file doesn't exist
+    """
+    global _synergy_graph_instance
+    if _synergy_graph_instance is None:
+        print("[SynergyGraph] Initializing singleton instance...")
+        _synergy_graph_instance = SynergyGraph()
+        if not _synergy_graph_instance.load():
+            print("[SynergyGraph] Graph file not found. Run build_synergy_graph.py first.")
+            return None
+        stats = _synergy_graph_instance.stats()
+        print(f"[SynergyGraph] Ready ({stats['num_cards']} cards, {stats['num_synergies']} synergies)")
+    return _synergy_graph_instance

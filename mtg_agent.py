@@ -6,6 +6,7 @@ with metagame statistics to provide expert recommendations.
 """
 
 import sys
+import time
 from typing import Dict, Any
 from langgraph.graph import StateGraph, END
 from src.agent.state import AgentState
@@ -17,6 +18,28 @@ from src.agent.nodes import (
     limited_metagame_node,
     synthesizer_node
 )
+from src.data.chroma import get_vector_store
+from src.cognitive import get_synergy_graph
+
+
+def _initialize_resources():
+    """
+    Pre-initialize expensive resources (VectorStore and SynergyGraph).
+
+    This ensures that the first query doesn't have to wait for initialization.
+    Resources are loaded as singletons and cached for subsequent queries.
+    """
+    print("\n[Agent] Pre-initializing resources...")
+    start_time = time.time()
+
+    # Initialize VectorStore (ChromaDB)
+    get_vector_store()
+
+    # Initialize SynergyGraph
+    get_synergy_graph()
+
+    elapsed = time.time() - start_time
+    print(f"[Agent] Resources initialized in {elapsed:.2f}s\n")
 
 
 def route_to_metagame(state: AgentState) -> str:
@@ -44,6 +67,10 @@ def create_agent() -> StateGraph:
     Returns:
         Compiled StateGraph ready to execute
     """
+    # Pre-initialize expensive resources (VectorStore + SynergyGraph)
+    # This ensures fast response times for all queries
+    _initialize_resources()
+
     # Create the graph
     workflow = StateGraph(AgentState)
 

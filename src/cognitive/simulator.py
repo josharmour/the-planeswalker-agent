@@ -4,6 +4,7 @@ import random
 from typing import List, Dict, Any, Optional, Tuple
 from collections import Counter
 import statistics
+from src.cognitive.mana_utils import parse_mana_cost, ManaSource, can_pay_cost
 
 
 class Deck:
@@ -22,6 +23,22 @@ class Deck:
         self.battlefield: List[Dict[str, Any]] = []
         self.graveyard: List[Dict[str, Any]] = []
         self.mana_pool: Dict[str, int] = {}
+        # Parsed costs cache
+        self._parsed_costs: Dict[str, Dict[str, Any]] = {}
+
+    def get_parsed_cost(self, card: Dict[str, Any]) -> Dict[str, Any]:
+        """Get or compute parsed mana cost for a card."""
+        name = card.get("name", "Unknown")
+        cost_str = card.get("mana_cost", "")
+
+        # Use simple cache key. Collisions unlikely for same name in one deck unless different printings.
+        # But we use object id if available or just name+cost.
+        key = f"{name}_{cost_str}"
+
+        if key not in self._parsed_costs:
+            self._parsed_costs[key] = parse_mana_cost(cost_str)
+
+        return self._parsed_costs[key]
 
     def shuffle(self) -> None:
         """Shuffle the library."""
@@ -69,6 +86,7 @@ class Deck:
         self.battlefield = []
         self.graveyard = []
         self.mana_pool = {}
+        self._parsed_costs = {}
 
     def count_lands_in_hand(self) -> int:
         """Count number of lands in current hand."""
@@ -86,9 +104,11 @@ class Deck:
     def get_castable_spells(self, available_mana: int) -> List[Dict[str, Any]]:
         """
         Get spells in hand that can be cast with available mana.
+        DEPRECATED: Use check_castability instead for complex mana.
+        Keeping for backward compatibility if needed, but updated logic uses complex checks.
 
         Args:
-            available_mana: Amount of mana available
+            available_mana: Amount of generic mana available (heuristic)
 
         Returns:
             List of castable cards
@@ -215,17 +235,28 @@ class GoldfishSimulator:
         self.deck.draw(starting_hand_size)
 
         turn_data = []
-        lands_played_total = 0
+        lands_played_total = 0 # Cumulative lands played over game
         spells_cast_total = 0
         cards_drawn_total = starting_hand_size
 
+        # Track battlefield state objects
+        # List of ManaSource objects (which wrap cards)
+        battlefield_sources: List[ManaSource] = []
+
         for turn in range(1, num_turns + 1):
-            # Draw for turn (except turn 1 on the play)
+            # Untap Step
+            for source in battlefield_sources:
+                source.tapped = False
+                source.current_turn = turn
+
+            # Draw Step (except turn 1 on the play)
             if turn > 1:
                 self.deck.draw(1)
                 cards_drawn_total += 1
 
-            # Try to play a land
+            # Main Phase
+
+            # 1. Play Land
             land_played = False
             for card in self.deck.hand[:]:
                 type_line = card.get("type_line", "").lower()
@@ -234,26 +265,80 @@ class GoldfishSimulator:
                     self.deck.battlefield.append(card)
                     lands_played_total += 1
                     land_played = True
+
+                    # Check if enters tapped
+                    tapped = "enters the battlefield tapped" in card.get("oracle_text", "").lower()
+
+                    # Add to sources
+                    source = ManaSource(card, tapped=tapped, entered_turn=turn, current_turn=turn)
+                    battlefield_sources.append(source)
                     break
 
-            # Count available mana (simplified: 1 per land)
-            available_mana = lands_played_total
-
-            # Try to cast spells
+            # 2. Cast Spells
             spells_cast_this_turn = 0
-            castable = self.deck.get_castable_spells(available_mana)
 
-            # Cast spells in order of decreasing CMC (greedy)
-            castable.sort(key=lambda c: c.get("cmc", 0), reverse=True)
+            while True:
+                # Identify castable spells
+                castable_candidates = []
 
-            for spell in castable:
-                cmc = spell.get("cmc", 0)
-                if cmc <= available_mana:
-                    self.deck.hand.remove(spell)
-                    self.deck.battlefield.append(spell)
-                    available_mana -= cmc
-                    spells_cast_this_turn += 1
-                    spells_cast_total += 1
+                # Filter out lands
+                spells_in_hand = [c for c in self.deck.hand if "land" not in c.get("type_line", "").lower()]
+
+                if not spells_in_hand:
+                    break
+
+                # Check each spell
+                for spell in spells_in_hand:
+                    cost = self.deck.get_parsed_cost(spell)
+                    can_cast, used_sources = can_pay_cost(cost, battlefield_sources)
+                    if can_cast:
+                        castable_candidates.append((spell, used_sources))
+
+                if not castable_candidates:
+                    break
+
+                # Greedy: Pick highest CMC
+                # We need to sort by CMC. spell is tuple[0]
+                castable_candidates.sort(key=lambda x: x[0].get("cmc", 0), reverse=True)
+
+                best_spell, sources_to_use = castable_candidates[0]
+
+                # Cast it
+                self.deck.hand.remove(best_spell)
+                self.deck.battlefield.append(best_spell)
+
+                # Tap sources
+                for src in sources_to_use:
+                    src.tapped = True
+
+                # Add spell to battlefield sources (if it's a permanent)
+                # We add everything for now, but only things that produce mana will be useful sources.
+                # However, ManaSource constructor checks capabilities.
+                # Check if enters tapped
+                tapped = "enters the battlefield tapped" in best_spell.get("oracle_text", "").lower()
+                new_source = ManaSource(best_spell, tapped=tapped, entered_turn=turn, current_turn=turn)
+                battlefield_sources.append(new_source)
+
+                spells_cast_this_turn += 1
+                spells_cast_total += 1
+
+            # Calculate available mana for stats (heuristic: count untapped sources)
+            # This is a bit simplified for the stats, as we might have just tapped out.
+            # But the requirement is likely to show mana capacity or remaining.
+            # The original metric was "lands_played_total".
+            # Let's keep "lands_played_total" as "Lands in Play".
+            # And add "available_mana" as potentially producible mana at start of post-combat main phase (or end of turn)?
+            # The original code logged "available_mana" = lands_played_total.
+            # I'll log total potential mana generation of the board (untapped).
+
+            available_mana_count = 0
+            for src in battlefield_sources:
+                 if not src.tapped and src.is_usable():
+                     # Estimate mana count (max 1 for now or sum of options?)
+                     # Let's use max production length
+                     if src.production_options:
+                         # Assume max production is what matters
+                         available_mana_count += max(sum(opt.values()) for opt in src.production_options)
 
             turn_data.append({
                 "turn": turn,
@@ -261,7 +346,7 @@ class GoldfishSimulator:
                 "lands_in_play": lands_played_total,
                 "spells_cast": spells_cast_this_turn,
                 "cards_in_hand": len(self.deck.hand),
-                "available_mana": lands_played_total
+                "available_mana": available_mana_count # Now reflects actual unused potential
             })
 
         return {

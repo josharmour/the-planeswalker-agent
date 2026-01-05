@@ -1,7 +1,7 @@
 """ChromaDB vector store for semantic card search."""
 
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import chromadb
 from chromadb.config import Settings
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -218,6 +218,69 @@ class VectorStore:
 
         print(f"✓ Upserted {total} cards successfully")
 
+    def _preprocess_query(self, query: str) -> str:
+        """
+        Preprocess user query to match card database terminology.
+
+        Args:
+            query: Raw user query
+
+        Returns:
+            Preprocessed query text optimized for TF-IDF matching
+        """
+        # Convert to lowercase for processing
+        query = query.lower()
+
+        # Common MTG query expansions to improve TF-IDF matching
+        # Maps user terms to database terms
+        expansions = {
+            'counterspell': 'counter target spell instant',
+            'counterspells': 'counter target spell instant',
+            'removal': 'destroy target creature exile',
+            'board wipe': 'destroy all creatures',
+            'boardwipe': 'destroy all creatures',
+            'wipe': 'destroy all',
+            'ramp': 'search basic land forest plains',
+            'draw': 'draw card',
+            'card draw': 'draw card',
+            'lifegain': 'gain life',
+            'life gain': 'gain life',
+            'tutor': 'search library',
+            'fetch': 'search library',
+            'mill': 'library graveyard',
+            'graveyard recursion': 'return graveyard battlefield hand',
+            'recursion': 'return graveyard',
+            'flicker': 'exile return battlefield',
+            'blink': 'exile return battlefield',
+            'token': 'create token creature',
+            'tokens': 'create token creature',
+            'etb': 'enters battlefield',
+            'enter the battlefield': 'enters battlefield',
+            'enters the battlefield': 'enters battlefield',
+            'ltb': 'leaves battlefield',
+            'leaves the battlefield': 'leaves battlefield',
+            'combat trick': 'instant target creature',
+            'pump spell': 'target creature gets',
+            'evasion': 'unblockable flying',
+            'cantrip': 'draw card instant sorcery',
+            'planeswalker': 'planeswalker loyalty',
+            'tribal': 'creature type',
+            'atraxa': 'proliferate counter planeswalker',
+            'proliferate': 'proliferate counter',
+            'commander staples': 'legendary creature powerful',
+            'staples': 'powerful',
+            'powerful': 'legendary rare mythic',
+        }
+
+        # Apply expansions (check for exact phrase matches first)
+        for term, expansion in expansions.items():
+            if term in query:
+                query = query.replace(term, expansion)
+
+        # Keep the original if it's already good (contains card type keywords)
+        # This helps queries like "Show me powerful Commander staples" stay broad
+        return query
+
     def query_similar(self, query: str, n_results: int = 5) -> Dict[str, Any]:
         """
         Search for cards similar to the query.
@@ -232,8 +295,11 @@ class VectorStore:
         if not self.is_vectorizer_fitted:
             raise RuntimeError("Vectorizer not fitted. Please run upsert_cards first.")
 
+        # Preprocess query to improve matching
+        processed_query = self._preprocess_query(query)
+
         # Compute query embedding locally
-        query_embedding = self.vectorizer.transform([query]).toarray()[0].tolist()
+        query_embedding = self.vectorizer.transform([processed_query]).toarray()[0].tolist()
 
         # Query with pre-computed embedding
         results = self.collection.query(
@@ -251,3 +317,25 @@ class VectorStore:
             Number of cards stored
         """
         return self.collection.count()
+
+
+# Singleton instance for performance
+_vector_store_instance: Optional[VectorStore] = None
+
+
+def get_vector_store() -> VectorStore:
+    """
+    Get or create the singleton VectorStore instance.
+
+    This avoids reinitializing ChromaDB on every query, which takes ~30+ seconds.
+    The first call will initialize the store, subsequent calls return the cached instance.
+
+    Returns:
+        Singleton VectorStore instance
+    """
+    global _vector_store_instance
+    if _vector_store_instance is None:
+        print("[VectorStore] Initializing singleton instance...")
+        _vector_store_instance = VectorStore()
+        print(f"[VectorStore] Ready ({_vector_store_instance.count()} cards indexed)")
+    return _vector_store_instance

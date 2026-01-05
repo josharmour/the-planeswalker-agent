@@ -1,10 +1,10 @@
 from typing import Dict, Any, List
 from src.agent.state import AgentState
-from src.data.chroma import VectorStore
+from src.data.chroma import get_vector_store
 from src.data.edhrec import EDHRECClient
 from src.data.seventeenlands import SeventeenLandsClient
 from src.data.mtggoldfish import MTGGoldfishClient
-from src.cognitive import SynergyGraph
+from src.cognitive import get_synergy_graph
 
 
 def router_node(state: AgentState) -> AgentState:
@@ -63,7 +63,7 @@ def oracle_node(state: AgentState) -> AgentState:
     print(f"[Oracle] Searching card database for: '{query}'")
 
     try:
-        store = VectorStore()
+        store = get_vector_store()
 
         # Perform semantic search
         results = store.query_similar(query, n_results=5)
@@ -224,9 +224,9 @@ def synergy_node(state: AgentState) -> AgentState:
     print("[Synergy] Analyzing card interactions...")
 
     try:
-        graph = SynergyGraph()
-        if not graph.load():
-            print("[Synergy] Synergy graph not found.")
+        graph = get_synergy_graph()
+        if graph is None:
+            print("[Synergy] Synergy graph not available.")
             state["synergy_results"] = None
             return state
 

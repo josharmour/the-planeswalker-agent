@@ -326,36 +326,83 @@ class EDHRECClient:
                 print(f"Using cached top commanders for {timeframe}")
                 return cached_data.get("commanders", [])
 
-        url = f"{self.BASE_URL}/top/commanders/{timeframe}"
+        # EDHREC changed their URL structure - now uses /commanders (default: past 2 years)
+        # Individual timeframes are no longer easily accessible via separate URLs
+        # Using the main commanders page
+        url = f"{self.BASE_URL}/commanders"
 
-        print(f"Fetching top commanders for {timeframe}...")
+        print(f"Fetching top commanders from EDHREC...")
 
         try:
             response = self._retry_request(url)
             soup = BeautifulSoup(response.text, 'html.parser')
 
             commanders = []
-            # Extract commander cards from the page
-            commander_cards = soup.find_all('a', class_='card') or soup.find_all('div', class_='commander')
 
-            for card in commander_cards[:50]:  # Limit to top 50
-                name = card.get('data-name') or card.get_text(strip=True)
-                if name:
+            # EDHREC uses card panels with specific data attributes
+            # Try multiple selectors to find commander cards
+            card_panels = (
+                soup.find_all('div', class_='_card_1dwe9_1') or
+                soup.find_all('a', attrs={'data-card-name': True}) or
+                soup.find_all('div', class_='Card_card') or
+                soup.find_all('a', href=lambda x: x and '/commanders/' in x if x else False)
+            )
+
+            seen_names = set()
+            for card in card_panels[:100]:  # Check more to filter duplicates
+                # Try different ways to extract commander name
+                name = (
+                    card.get('data-card-name') or
+                    card.get('data-name') or
+                    card.find('span', class_='card-name')
+                )
+
+                if isinstance(name, str):
+                    name = name.strip()
+                elif name:  # It's a tag
+                    name = name.get_text(strip=True)
+
+                # Also check href for commander names
+                if not name and card.get('href'):
+                    href = card.get('href')
+                    if '/commanders/' in href:
+                        # Extract name from URL like /commanders/atraxa-praetors-voice
+                        name_slug = href.split('/commanders/')[-1].split('/')[0]
+                        name = name_slug.replace('-', ' ').title()
+
+                if name and name not in seen_names:
                     commanders.append({
                         "name": name,
-                        "timeframe": timeframe
+                        "timeframe": "past2years"  # Current EDHREC default
                     })
+                    seen_names.add(name)
+
+            # If we didn't find any with the above, fall back to simpler extraction
+            if not commanders:
+                links = soup.find_all('a', href=lambda x: x and '/commanders/' in x if x else False)
+                for link in links[:50]:
+                    href = link.get('href', '')
+                    if '/commanders/' in href and not any(x in href for x in ['?', '#', 'theme', 'partner']):
+                        name_slug = href.split('/commanders/')[-1].split('/')[0]
+                        name = name_slug.replace('-', ' ').title()
+                        if name and name not in seen_names:
+                            commanders.append({
+                                "name": name,
+                                "timeframe": "past2years"
+                            })
+                            seen_names.add(name)
 
             data = {
-                "commanders": commanders,
-                "timeframe": timeframe,
+                "commanders": commanders[:50],  # Limit to top 50
+                "timeframe": "past2years",
                 "fetched_at": time.time()
             }
 
             # Cache the result
             self._write_cache(cache_key, data)
 
-            return commanders
+            print(f"Found {len(commanders[:50])} commanders")
+            return commanders[:50]
 
         except Exception as e:
             print(f"Error fetching top commanders: {e}")

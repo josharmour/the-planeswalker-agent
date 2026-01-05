@@ -30,6 +30,9 @@ class SynergyGraph:
         """Initialize the synergy graph."""
         self.graph = nx.Graph()
         self.card_index: Dict[str, Dict[str, Any]] = {}
+        # Inverted index for faster synergy lookups
+        # Format: "category:value" -> Set[card_names]
+        self.feature_index: Dict[str, Set[str]] = {}
 
     def add_card(self, card: Dict[str, Any]) -> None:
         """
@@ -56,6 +59,39 @@ class SynergyGraph:
             "features": features,
             "card": card
         }
+
+        # Update inverted index
+        self._update_index(card_name, features)
+
+    def _update_index(self, card_name: str, features: Dict[str, Any]) -> None:
+        """Update the inverted index with a card's features."""
+        # Index tribes
+        for tribe in features.get("tribes", []):
+            key = f"tribe:{tribe}"
+            if key not in self.feature_index:
+                self.feature_index[key] = set()
+            self.feature_index[key].add(card_name)
+
+        # Index mechanics
+        for mechanic in features.get("mechanics", []):
+            key = f"mechanic:{mechanic}"
+            if key not in self.feature_index:
+                self.feature_index[key] = set()
+            self.feature_index[key].add(card_name)
+
+        # Index themes
+        for theme in features.get("themes", []):
+            key = f"theme:{theme}"
+            if key not in self.feature_index:
+                self.feature_index[key] = set()
+            self.feature_index[key].add(card_name)
+
+        # Index keywords
+        for keyword in features.get("keywords", []):
+            key = f"keyword:{keyword}"
+            if key not in self.feature_index:
+                self.feature_index[key] = set()
+            self.feature_index[key].add(card_name)
 
     def _extract_card_features(self, card: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -123,26 +159,80 @@ class SynergyGraph:
 
         cards = list(self.graph.nodes(data=True))
         edge_count = 0
+        total_cards = len(cards)
 
-        # Compare all pairs of cards
-        for i, (card1_name, card1_data) in enumerate(cards):
-            for card2_name, card2_data in cards[i+1:]:
+        # batch size for reporting
+        report_interval = 1000
+
+        for i, (card_name, card_data) in enumerate(cards):
+            if (i + 1) % report_interval == 0:
+                print(f"  Processed {i+1}/{total_cards} cards... ({edge_count} edges)")
+
+            # Get candidates from inverted index
+            # This drastically reduces O(N^2) to roughly O(N * Avg_Candidates)
+            candidates = self._get_candidates(card_name, card_data)
+
+            for candidate_name in candidates:
+                # Avoid self-loops and duplicate checks (canonical ordering)
+                if candidate_name <= card_name:
+                    continue
+
+                # Candidate data might not be in the graph yet if we are streaming,
+                # but here we assume graph is fully populated with nodes first.
+                candidate_data = self.graph.nodes[candidate_name]
+
                 synergy_score = self._calculate_synergy(
-                    card1_name, card1_data,
-                    card2_name, card2_data
+                    card_name, card_data,
+                    candidate_name, candidate_data
                 )
 
                 # Only add edge if there's meaningful synergy
-                if synergy_score > 0:
+                # Threshold > 0.45 ensures only strong interactions (Tribal/Combos) are saved
+                # This keeps the graph size manageable and high-quality.
+                if synergy_score > 0.45:
                     self.graph.add_edge(
-                        card1_name,
-                        card2_name,
+                        card_name,
+                        candidate_name,
                         weight=synergy_score,
-                        synergy_types=self._get_synergy_types(card1_data, card2_data)
+                        synergy_types=self._get_synergy_types(card_data, candidate_data)
                     )
                     edge_count += 1
 
         print(f"Created {edge_count} synergy relationships")
+
+    def _get_candidates(self, card_name: str, card_data: Dict[str, Any]) -> Set[str]:
+        """Get set of candidate cards that share at least one feature."""
+        candidates = set()
+
+        # Check tribes
+        for tribe in card_data.get("tribes", []):
+            key = f"tribe:{tribe}"
+            candidates.update(self.feature_index.get(key, set()))
+
+        # Check mechanics
+        for mechanic in card_data.get("mechanics", []):
+            key = f"mechanic:{mechanic}"
+            candidates.update(self.feature_index.get(key, set()))
+
+        # Check themes
+        for theme in card_data.get("themes", []):
+            key = f"theme:{theme}"
+            candidates.update(self.feature_index.get(key, set()))
+
+        # Keywords often produce too many poor matches (e.g., "Flying"),
+        # preventing the "Flying" index from exploding candidates is wise,
+        # but for now we'll include them since they are part of synergy calculation.
+        # Determine if we want to restrict this.
+        # For optimization, we might SKIP common keywords if we want strict combos.
+        # But let's proceed with including everything first.
+        for keyword in card_data.get("keywords", []):
+            key = f"keyword:{keyword}"
+            candidates.update(self.feature_index.get(key, set()))
+
+        # Remove self
+        candidates.discard(card_name)
+
+        return candidates
 
     def _calculate_synergy(
         self,
@@ -332,22 +422,39 @@ class SynergyGraph:
         return recommendations[:top_n]
 
     def save(self) -> None:
-        """Save the synergy graph to disk."""
-        # Convert to JSON-serializable format
-        data = {
-            "nodes": list(self.graph.nodes(data=True)),
-            "edges": [
-                (u, v, data)
-                for u, v, data in self.graph.edges(data=True)
-            ]
-        }
-
+        """Save the synergy graph to disk using streaming write to avoid OOM."""
         self.GRAPH_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(self.GRAPH_CACHE_PATH, 'w') as f:
-            json.dump(data, f)
-
-        print(f"Saved synergy graph to {self.GRAPH_CACHE_PATH}")
+        
+        print(f"Saving graph to {self.GRAPH_CACHE_PATH}...")
+        
+        try:
+            with open(self.GRAPH_CACHE_PATH, 'w', encoding='utf-8') as f:
+                f.write('{"nodes": [')
+                
+                # Write nodes
+                nodes = list(self.graph.nodes(data=True))
+                total_nodes = len(nodes)
+                for i, (node, data) in enumerate(nodes):
+                    if i > 0: f.write(',')
+                    entry = [node, data]
+                    f.write(json.dumps(entry))
+                    
+                f.write('], "edges": [')
+                
+                # Write edges
+                edges = list(self.graph.edges(data=True))
+                total_edges = len(edges)
+                for i, (u, v, data) in enumerate(edges):
+                    if i > 0: f.write(',')
+                    entry = [u, v, data]
+                    f.write(json.dumps(entry))
+                    
+                f.write(']}')
+                
+            print(f"Saved {total_nodes} nodes and {total_edges} edges successfully")
+            
+        except Exception as e:
+            print(f"Error saving graph: {e}")
 
     def load(self) -> bool:
         """

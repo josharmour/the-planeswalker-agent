@@ -293,7 +293,9 @@ def synthesizer_node(state: AgentState) -> AgentState:
             
             themes = cmd_data.get("themes", [])
             if themes:
-                response_parts.append(f"Themes: {', '.join(themes[:3])}")
+                # Ensure themes are strings
+                theme_names = [str(t.get('name', 'Unknown') if isinstance(t, dict) else t) for t in themes[:3]]
+                response_parts.append(f"Themes: {', '.join(theme_names)}")
             
             cards = cmd_data.get("cards", [])
             if cards:

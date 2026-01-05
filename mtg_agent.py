@@ -22,10 +22,10 @@ from src.agent.nodes import (
 def route_to_metagame(state: AgentState) -> str:
     """Conditional edge: Route to appropriate metagame node."""
     query_type = state.get("query_type")
-    if query_type == "constructed":
-        return "constructed_metagame"
-    elif query_type == "limited":
+    if query_type == "limited":
         return "limited_metagame"
+    elif query_type in ["constructed", "standard", "modern", "pioneer", "legacy", "pauper", "commander"]:
+        return "constructed_metagame"
     else:
         return "synthesizer"
 

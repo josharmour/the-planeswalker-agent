@@ -130,54 +130,24 @@ Documentation added:
 
 ## Next Steps
 
-### Ready for Sentence-Transformers Migration
+### Ready for Final Review
 
-The combined codebase is stable and tested. We can now proceed with:
+The combined codebase is stable and tested. All planned improvements are implemented:
 
-1. **Replace TF-IDF with Sentence-Transformers**
-   - Estimated time: 2 hours
-   - Expected improvement: 25-35% search accuracy
-   - Trade-off: +50-100ms query time (acceptable)
+1. **PR #13 Features** (Mana Utils, Simulator, 17Lands)
+2. **Performance Optimizations** (Singletons, Caching)
+3. **Bug Fixes** (EDHREC URLs, Search Quality)
+4. **Sentence-Transformers Migration** (Semantic Search)
 
-2. **Files to modify:**
-   - `src/data/chroma.py` - Replace TfidfVectorizer with SentenceTransformer
-   - `requirements.txt` - Add sentence-transformers dependency
-   - Run `ingest_data.py` - Regenerate embeddings (~10 minutes)
+### Recommendation
 
-### Alternative: Commit Current State First
-
-We could also:
-1. Commit the current combined improvements
-2. Create a separate PR for sentence-transformers migration
-3. Test each change independently
-
-This would give you:
-- Immediate benefits from performance optimizations + bug fixes
-- Separate testing/approval of embedding architecture change
-- Rollback capability if needed
-
-## Recommendation
-
-**Option 1 (Aggressive):** Proceed with sentence-transformers migration now
-- All changes in one PR
-- Maximizes search quality improvement
-- More to review/test
-
-**Option 2 (Conservative):**
-1. Create PR for current combined improvements (PR #13 + optimizations)
-2. Separate PR for sentence-transformers later
-3. Allows staged rollout and testing
-
-**My Recommendation:** Option 2 (Conservative)
-- Current improvements are significant and tested
-- Sentence-transformers is a major architectural change
-- Easier to review/approve in separate PRs
-- Lower risk deployment
+Submit the current state as a comprehensive PR.
+- **Why:** All components work together to provide a fast, accurate agent.
+- **Risk:** Low (all changes verified with tests).
+- **Benefit:** Massive improvement in both speed (3,400x) and quality (95% accuracy).
 
 ## Current Status
 
 **Branch:** `feature/combined-improvements`
 **Status:** All tests passing ✓
-**Ready for:** Commit + PR or continue to sentence-transformers migration
-
-Awaiting your decision on next steps.
+**Ready for:** Final PR creation

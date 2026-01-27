@@ -5,6 +5,7 @@ from src.data.edhrec import EDHRECClient
 from src.data.seventeenlands import SeventeenLandsClient
 from src.data.mtggoldfish import MTGGoldfishClient
 from src.cognitive import get_synergy_graph
+from src.config import config
 
 
 def router_node(state: AgentState) -> AgentState:
@@ -257,6 +258,9 @@ def synergy_node(state: AgentState) -> AgentState:
 def synthesizer_node(state: AgentState) -> AgentState:
     """
     Synthesize results into a final response.
+
+    If an LLM provider is configured (OpenAI/Anthropic), uses AI to generate
+    a natural language response. Otherwise, falls back to template-based formatting.
     """
     print("[Synthesizer] Combining results...")
 
@@ -265,6 +269,29 @@ def synthesizer_node(state: AgentState) -> AgentState:
     oracle_results = state.get("oracle_results", [])
     synergy_results = state.get("synergy_results", {})
     metagame_results = state.get("metagame_results", {})
+
+    # Try LLM-based synthesis if configured
+    llm_provider = config.get_active_llm_provider()
+    if llm_provider:
+        print(f"[Synthesizer] Using LLM provider: {llm_provider}")
+        try:
+            from src.data.openai_realtime import synthesize_with_llm
+            llm_response = synthesize_with_llm(
+                user_query=query,
+                oracle_results=oracle_results or [],
+                synergy_results=synergy_results,
+                metagame_results=metagame_results,
+                query_type=query_type,
+            )
+            if llm_response:
+                state["final_response"] = llm_response
+                print("[Synthesizer] LLM response generated successfully")
+                return state
+        except Exception as e:
+            print(f"[Synthesizer] LLM synthesis failed: {e}, falling back to template")
+
+    # Fall back to template-based response
+    print("[Synthesizer] Using template-based response")
 
     response_parts = []
     response_parts.append(f"Query: {query}")

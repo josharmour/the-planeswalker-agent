@@ -14,3 +14,6 @@ lxml
 sentence-transformers>=2.2.2
 torch>=2.0.0
 pyedhrec
+# OpenAI API support (standard + Realtime)
+openai>=1.0.0
+websockets>=12.0

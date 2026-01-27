@@ -25,12 +25,14 @@ except ImportError:
     WebSocketClientProtocol = None
 
 try:
-    from openai import OpenAI, AsyncOpenAI
+    from openai import OpenAI, AsyncOpenAI, AzureOpenAI, AsyncAzureOpenAI
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
     OpenAI = None
     AsyncOpenAI = None
+    AzureOpenAI = None
+    AsyncAzureOpenAI = None
 
 from src.config import config
 
@@ -125,6 +127,63 @@ class OpenAIRealtimeClient:
             )
         return RealtimeSession(self)
 
+    def _get_sync_client(self):
+        """Get the appropriate sync client (Azure or OpenAI)."""
+        if self.is_azure:
+            # Use Azure OpenAI client
+            azure_endpoint = config.openai.azure_endpoint
+            if not azure_endpoint and config.openai.realtime_endpoint:
+                # Extract base URL from realtime endpoint
+                endpoint = config.openai.realtime_endpoint
+                if "wss://" in endpoint:
+                    azure_endpoint = endpoint.replace("wss://", "https://").split("/openai")[0]
+                elif "ws://" in endpoint:
+                    azure_endpoint = endpoint.replace("ws://", "http://").split("/openai")[0]
+
+            return AzureOpenAI(
+                api_key=self.api_key,
+                azure_endpoint=azure_endpoint,
+                api_version=self.api_version,
+            )
+        else:
+            return OpenAI(
+                api_key=self.api_key,
+                base_url=config.openai.api_endpoint,
+            )
+
+    def _get_async_client(self):
+        """Get the appropriate async client (Azure or OpenAI)."""
+        if self.is_azure:
+            azure_endpoint = config.openai.azure_endpoint
+            if not azure_endpoint and config.openai.realtime_endpoint:
+                endpoint = config.openai.realtime_endpoint
+                if "wss://" in endpoint:
+                    azure_endpoint = endpoint.replace("wss://", "https://").split("/openai")[0]
+                elif "ws://" in endpoint:
+                    azure_endpoint = endpoint.replace("ws://", "http://").split("/openai")[0]
+
+            return AsyncAzureOpenAI(
+                api_key=self.api_key,
+                azure_endpoint=azure_endpoint,
+                api_version=self.api_version,
+            )
+        else:
+            return AsyncOpenAI(
+                api_key=self.api_key,
+                base_url=config.openai.api_endpoint,
+            )
+
+    def _get_model_name(self) -> str:
+        """Get the model/deployment name to use for Chat API."""
+        if self.is_azure:
+            # For Azure, prefer chat-specific deployment, fall back to general deployment
+            return (
+                config.openai.azure_chat_deployment
+                or config.openai.azure_deployment
+                or self.chat_model
+            )
+        return self.chat_model
+
     def chat(
         self,
         message: str,
@@ -133,6 +192,8 @@ class OpenAIRealtimeClient:
     ) -> str:
         """
         Send a message using the standard Chat API (synchronous fallback).
+
+        Supports both OpenAI and Azure OpenAI endpoints.
 
         Args:
             message: User message to send
@@ -147,10 +208,8 @@ class OpenAIRealtimeClient:
                 "OpenAI Chat API not available. Install openai: pip install openai"
             )
 
-        client = OpenAI(
-            api_key=self.api_key,
-            base_url=config.openai.api_endpoint,
-        )
+        client = self._get_sync_client()
+        model = self._get_model_name()
 
         messages = []
         if system_prompt:
@@ -161,8 +220,10 @@ class OpenAIRealtimeClient:
 
         messages.append({"role": "user", "content": message})
 
+        logger.info(f"Chat API request - Azure: {self.is_azure}, Model: {model}")
+
         response = client.chat.completions.create(
-            model=self.chat_model,
+            model=model,
             messages=messages,
             temperature=config.openai.temperature,
             max_tokens=config.openai.max_tokens,
@@ -179,6 +240,8 @@ class OpenAIRealtimeClient:
         """
         Send a message using the standard Chat API (async version).
 
+        Supports both OpenAI and Azure OpenAI endpoints.
+
         Args:
             message: User message to send
             system_prompt: Optional system prompt
@@ -192,10 +255,8 @@ class OpenAIRealtimeClient:
                 "OpenAI Chat API not available. Install openai: pip install openai"
             )
 
-        client = AsyncOpenAI(
-            api_key=self.api_key,
-            base_url=config.openai.api_endpoint,
-        )
+        client = self._get_async_client()
+        model = self._get_model_name()
 
         messages = []
         if system_prompt:
@@ -207,7 +268,7 @@ class OpenAIRealtimeClient:
         messages.append({"role": "user", "content": message})
 
         response = await client.chat.completions.create(
-            model=self.chat_model,
+            model=model,
             messages=messages,
             temperature=config.openai.temperature,
             max_tokens=config.openai.max_tokens,
@@ -224,6 +285,8 @@ class OpenAIRealtimeClient:
         """
         Stream a response using the standard Chat API.
 
+        Supports both OpenAI and Azure OpenAI endpoints.
+
         Args:
             message: User message to send
             system_prompt: Optional system prompt
@@ -237,10 +300,8 @@ class OpenAIRealtimeClient:
                 "OpenAI Chat API not available. Install openai: pip install openai"
             )
 
-        client = AsyncOpenAI(
-            api_key=self.api_key,
-            base_url=config.openai.api_endpoint,
-        )
+        client = self._get_async_client()
+        model = self._get_model_name()
 
         messages = []
         if system_prompt:
@@ -252,7 +313,7 @@ class OpenAIRealtimeClient:
         messages.append({"role": "user", "content": message})
 
         stream = await client.chat.completions.create(
-            model=self.chat_model,
+            model=model,
             messages=messages,
             temperature=config.openai.temperature,
             max_tokens=config.openai.max_tokens,

@@ -23,7 +23,8 @@ class OpenAIConfig:
     realtime_api_version: str = "2024-10-01-preview"
     # Azure-specific settings
     azure_endpoint: Optional[str] = None  # e.g., https://your-resource.openai.azure.com
-    azure_deployment: Optional[str] = None  # Deployment name for Azure
+    azure_deployment: Optional[str] = None  # Deployment name for Realtime API
+    azure_chat_deployment: Optional[str] = None  # Deployment name for Chat API (if different)
     # Standard API settings (fallback)
     api_endpoint: str = "https://api.openai.com/v1"
     chat_model: str = "gpt-4o"
@@ -139,6 +140,7 @@ class Config:
             # Azure-specific settings
             azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
             azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+            azure_chat_deployment=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT"),
             # Standard API settings
             api_endpoint=os.getenv(
                 "OPENAI_API_ENDPOINT",
@@ -201,9 +203,10 @@ class Config:
         print(f"  - API Version: {self.openai.realtime_api_version}")
         print(f"  - Realtime Model: {self.openai.realtime_model}")
         print(f"  - Chat Model: {self.openai.chat_model}")
-        if self.openai.azure_endpoint:
-            print(f"  - Azure Endpoint: {self.openai.azure_endpoint}")
-            print(f"  - Azure Deployment: {self.openai.azure_deployment}")
+        if self.openai.azure_endpoint or self.openai.is_azure:
+            print(f"  - Azure Endpoint: {self.openai.azure_endpoint or '(from realtime URL)'}")
+            print(f"  - Azure Realtime Deployment: {self.openai.azure_deployment or '(not set)'}")
+            print(f"  - Azure Chat Deployment: {self.openai.azure_chat_deployment or self.openai.azure_deployment or '(not set)'}")
         print(f"Anthropic Configured: {self.anthropic.is_configured}")
         print(f"  - Model: {self.anthropic.model}")
         print(f"Verbose: {self.agent.verbose}")

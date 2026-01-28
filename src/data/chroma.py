@@ -22,10 +22,7 @@ class VectorStore:
         # Initialize ChromaDB with persistence
         self.client = chromadb.PersistentClient(
             path=str(self.PERSIST_DIR),
-            settings=Settings(
-                anonymized_telemetry=False,
-                allow_reset=True
-            )
+            settings=Settings(anonymized_telemetry=False, allow_reset=True),
         )
 
         # Load sentence-transformer model
@@ -36,7 +33,10 @@ class VectorStore:
         # Get or create collection
         self.collection = self.client.get_or_create_collection(
             name=self.COLLECTION_NAME,
-            metadata={"description": "Magic: The Gathering card embeddings (sentence-transformers)", "hnsw:space": "cosine"}
+            metadata={
+                "description": "Magic: The Gathering card embeddings (sentence-transformers)",
+                "hnsw:space": "cosine",
+            },
         )
 
     def _prepare_card_text(self, card: Dict[str, Any]) -> str:
@@ -123,15 +123,17 @@ class VectorStore:
         card_data = []
         for card in cards:
             if card.get("id"):
-                card_data.append({
-                    "id": card["id"],
-                    "text": self._prepare_card_text(card),
-                    "metadata": self._prepare_metadata(card)
-                })
+                card_data.append(
+                    {
+                        "id": card["id"],
+                        "text": self._prepare_card_text(card),
+                        "metadata": self._prepare_metadata(card),
+                    }
+                )
 
         # Process in batches
         for i in range(0, len(card_data), batch_size):
-            batch = card_data[i:i + batch_size]
+            batch = card_data[i : i + batch_size]
             batch_num = i // batch_size + 1
             total_batches = (len(card_data) + batch_size - 1) // batch_size
 
@@ -144,7 +146,7 @@ class VectorStore:
                 texts,
                 show_progress_bar=False,
                 convert_to_numpy=True,
-                batch_size=batch_size
+                batch_size=batch_size,
             )
 
             # Prepare data for ChromaDB
@@ -158,14 +160,16 @@ class VectorStore:
                 ids=ids,
                 documents=documents,
                 embeddings=embeddings_list,
-                metadatas=metadatas
+                metadatas=metadatas,
             )
 
             print(f"  Batch {batch_num}/{total_batches} complete ({len(ids)} cards)")
 
         print(f"✓ Upserted {total} cards successfully with semantic embeddings")
 
-    def query_similar(self, query: str, n_results: int = 5) -> Dict[str, Any]:
+    def query_similar(
+        self, query: str, n_results: int = 5, set_filter: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Search for cards similar to the query using semantic understanding.
 
@@ -174,23 +178,42 @@ class VectorStore:
         Args:
             query: Natural language search query
             n_results: Number of results to return
+            set_filter: Optional set code to filter by (e.g., "tla", "mkm")
 
         Returns:
             Dictionary with 'ids', 'documents', 'metadatas' keys
         """
         # Encode query directly - no preprocessing needed!
         # Model understands: "counterspells", "Atraxa deck", "sacrifice outlets", etc.
-        query_embedding = self.model.encode(
-            query,
-            convert_to_numpy=True
-        )
+        query_embedding = self.model.encode(query, convert_to_numpy=True)
+
+        # Build query params
+        query_params = {
+            "query_embeddings": [query_embedding.tolist()],
+            "n_results": n_results,
+        }
+
+        # Add set filter if provided
+        if set_filter:
+            query_params["where"] = {"set": set_filter.lower()}
 
         # Search with semantic embedding
-        results = self.collection.query(
-            query_embeddings=[query_embedding.tolist()],
-            n_results=n_results
-        )
+        results = self.collection.query(**query_params)
 
+        return results
+
+    def query_by_set(self, set_code: str, n_results: int = 20) -> Dict[str, Any]:
+        """
+        Get cards from a specific set.
+
+        Args:
+            set_code: Set code (e.g., "tla", "mkm", "lci")
+            n_results: Number of results to return
+
+        Returns:
+            Dictionary with 'ids', 'documents', 'metadatas' keys
+        """
+        results = self.collection.get(where={"set": set_code.lower()}, limit=n_results)
         return results
 
     def count(self) -> int:
@@ -219,7 +242,9 @@ def get_vector_store() -> VectorStore:
     """
     global _vector_store_instance
     if _vector_store_instance is None:
-        print("[VectorStore] Initializing singleton instance with sentence-transformers...")
+        print(
+            "[VectorStore] Initializing singleton instance with sentence-transformers..."
+        )
         _vector_store_instance = VectorStore()
         print(f"[VectorStore] Ready ({_vector_store_instance.count()} cards indexed)")
     return _vector_store_instance

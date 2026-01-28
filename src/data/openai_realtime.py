@@ -367,7 +367,7 @@ class RealtimeSession:
         logger.info(f"Connecting to Realtime API: {url}")
         logger.info(f"Using Azure: {self.client.is_azure}")
 
-        self.ws = await websockets.connect(url, extra_headers=headers)
+        self.ws = await websockets.connect(url, additional_headers=headers)
 
         # Wait for session.created event
         response = await self.ws.recv()

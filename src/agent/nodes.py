@@ -22,9 +22,17 @@ def router_node(state: AgentState) -> AgentState:
 
     # Keywords for Limited format
     limited_keywords = [
-        "draft", "sealed", "limited", "pick", "pack",
-        "color pair", "archetype", "premier draft", "quick draft",
-        "arena", "mtga"
+        "draft",
+        "sealed",
+        "limited",
+        "pick",
+        "pack",
+        "color pair",
+        "archetype",
+        "premier draft",
+        "quick draft",
+        "arena",
+        "mtga",
     ]
 
     # Explicit format keywords
@@ -35,56 +43,117 @@ def router_node(state: AgentState) -> AgentState:
         "legacy": ["legacy"],
         "pauper": ["pauper"],
         "commander": ["commander", "edh"],
-        "limited": limited_keywords
+        "limited": limited_keywords,
     }
 
     # Check for specific format mentions first
     query_type = "constructed"  # Default
-    
+
     # Check simple formats first
     for fmt, keywords in formats.items():
         if any(kw in query for kw in keywords):
             query_type = fmt
             break
-            
+
     print(f"[Router] Classified query as: {query_type.upper()}")
 
     state["query_type"] = query_type
     if "metadata" not in state:
         state["metadata"] = {}
-    
+
     return state
 
 
 def oracle_node(state: AgentState) -> AgentState:
     """
     Perform semantic card search using ChromaDB.
+    Detects set-based queries and filters appropriately.
     """
     query = state["user_query"]
+    query_lower = query.lower()
     print(f"[Oracle] Searching card database for: '{query}'")
 
     try:
         store = get_vector_store()
 
-        # Perform semantic search
-        results = store.query_similar(query, n_results=5)
+        # Detect set-based queries
+        set_mappings = {
+            "avatar": "tla",
+            "avatar the last airbender": "tla",
+            "last airbender": "tla",
+            "atla": "tla",
+            "tla": "tla",
+            "murders at karlov manor": "mkm",
+            "karlov manor": "mkm",
+            "mkm": "mkm",
+            "lost caverns": "lci",
+            "ixalan": "lci",
+            "lci": "lci",
+            "wilds of eldraine": "woe",
+            "eldraine": "woe",
+            "woe": "woe",
+            "lord of the rings": "ltr",
+            "lotr": "ltr",
+            "ltr": "ltr",
+            "march of the machine": "mom",
+            "mom": "mom",
+            "foundations": "fdn",
+            "fdn": "fdn",
+        }
 
-        # Format results
-        oracle_results = []
-        if results and 'ids' in results and len(results['ids']) > 0:
-            ids = results['ids'][0]
-            documents = results['documents'][0]
-            metadatas = results['metadatas'][0]
+        detected_set = None
+        for set_name, set_code in set_mappings.items():
+            if set_name in query_lower:
+                detected_set = set_code
+                print(f"[Oracle] Detected set query: {set_code.upper()}")
+                break
 
-            for i in range(len(ids)):
-                oracle_results.append({
-                    "id": ids[i],
-                    "name": metadatas[i].get("name", "Unknown"),
-                    "type_line": metadatas[i].get("type_line", ""),
-                    "text": documents[i],
-                    "metadata": metadatas[i]
-                })
+        # Perform search - use set filter if detected
+        if detected_set:
+            # For set queries, get cards from that set
+            results = store.query_by_set(detected_set, n_results=10)
+            # query_by_set returns different format, normalize it
+            oracle_results = []
+            if results and "ids" in results and len(results["ids"]) > 0:
+                ids = results["ids"]
+                documents = results.get("documents", [])
+                metadatas = results.get("metadatas", [])
 
+                for i in range(len(ids)):
+                    oracle_results.append(
+                        {
+                            "id": ids[i],
+                            "name": metadatas[i].get("name", "Unknown")
+                            if metadatas
+                            else "Unknown",
+                            "type_line": metadatas[i].get("type_line", "")
+                            if metadatas
+                            else "",
+                            "text": documents[i] if documents else "",
+                            "metadata": metadatas[i] if metadatas else {},
+                        }
+                    )
+        else:
+            # Standard semantic search
+            results = store.query_similar(query, n_results=5)
+            oracle_results = []
+            if results and "ids" in results and len(results["ids"]) > 0:
+                ids = results["ids"][0]
+                documents = results["documents"][0]
+                metadatas = results["metadatas"][0]
+
+                for i in range(len(ids)):
+                    oracle_results.append(
+                        {
+                            "id": ids[i],
+                            "name": metadatas[i].get("name", "Unknown"),
+                            "type_line": metadatas[i].get("type_line", ""),
+                            "text": documents[i],
+                            "metadata": metadatas[i],
+                        }
+                    )
+
+        if oracle_results:
             print(f"[Oracle] Found {len(oracle_results)} relevant cards")
         else:
             print("[Oracle] No cards found")
@@ -101,14 +170,14 @@ def oracle_node(state: AgentState) -> AgentState:
 def constructed_metagame_node(state: AgentState) -> AgentState:
     """
     Fetch Constructed metagame data.
-    
+
     Supports:
     - Commander -> EDHREC
     - Standard, Modern, Pioneer -> MTGGoldfish
     """
     query_type = state.get("query_type", "constructed")
     user_query = state.get("user_query", "").lower()
-    
+
     # If limited, skip
     if query_type == "limited":
         return state
@@ -124,7 +193,7 @@ def constructed_metagame_node(state: AgentState) -> AgentState:
             # Check if query mentions a specific commander
             oracle_results = state.get("oracle_results", [])
             commanders_found = []
-            
+
             for card in oracle_results[:3]:
                 type_line = card.get("type_line", "").lower()
                 if "legendary" in type_line and "creature" in type_line:
@@ -138,22 +207,24 @@ def constructed_metagame_node(state: AgentState) -> AgentState:
             else:
                 top_commanders = client.get_top_commanders(timeframe="week")
                 state["metagame_results"]["top_commanders"] = top_commanders[:10]
-                
+
         # CASE 2: Competitive Formats -> MTGGoldfish
         elif query_type in ["standard", "modern", "pioneer", "legacy", "pauper"]:
             client = MTGGoldfishClient()
             decks = client.get_metagame(query_type)
             state["metagame_results"]["top_decks"] = decks
             print(f"[{query_type.title()}] Found {len(decks)} top decks")
-            
+
             # --- CONTEXT AWARENESS FOR DECKS ---
             target_deck = None
-            
+
             # Scenario A: "What is the best deck?"
             if "best" in user_query or "top" in user_query:
                 if decks:
                     target_deck = decks[0]
-                    print(f"[{query_type.title()}] 'Best' deck requested. Targeting: {target_deck['name']}")
+                    print(
+                        f"[{query_type.title()}] 'Best' deck requested. Targeting: {target_deck['name']}"
+                    )
 
             # Scenario B: "Tell me about [Deck Name]"
             # We check if any deck name from our results is in the user query
@@ -164,16 +235,20 @@ def constructed_metagame_node(state: AgentState) -> AgentState:
                     clean_name = deck["name"].lower()
                     if clean_name in user_query:
                         target_deck = deck
-                        print(f"[{query_type.title()}] Specific deck requested: {deck['name']}")
+                        print(
+                            f"[{query_type.title()}] Specific deck requested: {deck['name']}"
+                        )
                         break
-            
+
             # Fetch Decklist if we have a target
             if target_deck and "url" in target_deck:
-                print(f"[{query_type.title()}] Fetching deck list for {target_deck['name']}...")
+                print(
+                    f"[{query_type.title()}] Fetching deck list for {target_deck['name']}..."
+                )
                 deck_list = client.get_deck_list(target_deck["url"])
                 state["metagame_results"]["focus_deck"] = {
                     "info": target_deck,
-                    "list": deck_list
+                    "list": deck_list,
                 }
 
     except Exception as e:
@@ -200,8 +275,12 @@ def limited_metagame_node(state: AgentState) -> AgentState:
         expansion = next((code for code in set_codes if code in query), "MKM")
 
         metagame_data = {}
-        metagame_data["color_pairs"] = client.get_color_pair_data(expansion=expansion, format_type="PremierDraft")
-        metagame_data["set_stats"] = client.get_set_stats(expansion=expansion, format_type="PremierDraft")
+        metagame_data["color_pairs"] = client.get_color_pair_data(
+            expansion=expansion, format_type="PremierDraft"
+        )
+        metagame_data["set_stats"] = client.get_set_stats(
+            expansion=expansion, format_type="PremierDraft"
+        )
 
         state["metagame_results"] = metagame_data
 
@@ -238,11 +317,7 @@ def synergy_node(state: AgentState) -> AgentState:
             synergies = graph.find_synergies_for_card(card_name, top_n=5)
             if synergies:
                 synergy_results[card_name] = [
-                    {
-                        "card": syn_card,
-                        "score": score,
-                        "types": syn_types
-                    }
+                    {"card": syn_card, "score": score, "types": syn_types}
                     for syn_card, score, syn_types in synergies
                 ]
 
@@ -297,7 +372,7 @@ def synthesizer_node(state: AgentState) -> AgentState:
     response_parts.append(f"Query: {query}")
     response_parts.append(f"Type: {query_type.title()}")
     response_parts.append("")
-    
+
     # Check if we have a "Focus Deck" (Detailed View)
     focus_deck = metagame_results.get("focus_deck")
 
@@ -307,21 +382,23 @@ def synthesizer_node(state: AgentState) -> AgentState:
     if oracle_results and not focus_deck:
         response_parts.append("=== Relevant Cards ===")
         for i, card in enumerate(oracle_results[:3], 1):
-             response_parts.append(f"{i}. {card['name']} ({card['type_line']})")
+            response_parts.append(f"{i}. {card['name']} ({card['type_line']})")
         response_parts.append("")
 
     # 2. Metagame Results (The Meat)
     if metagame_results and "error" not in metagame_results:
-        
         # COMMANDER RECS
         if "commander_recommendations" in metagame_results:
             cmd_data = metagame_results["commander_recommendations"]
-            response_parts.append(f"=== Commander: {cmd_data.get('commander', 'Unknown')} ===")
-            
+            response_parts.append(
+                f"=== Commander: {cmd_data.get('commander', 'Unknown')} ==="
+            )
+
             themes = cmd_data.get("themes", [])
             if themes:
-                response_parts.append(f"Themes: {', '.join(themes[:3])}")
-            
+                theme_names = [t.get('name', str(t)) if isinstance(t, dict) else str(t) for t in themes[:3]]
+                response_parts.append(f"Themes: {', '.join(theme_names)}")
+
             cards = cmd_data.get("cards", [])
             if cards:
                 response_parts.append("\nTop Synergies:")
@@ -338,27 +415,31 @@ def synthesizer_node(state: AgentState) -> AgentState:
         elif focus_deck:
             info = focus_deck.get("info", {})
             deck_list = focus_deck.get("list", {})
-            
+
             response_parts.append(f"=== Deck Focus: {info.get('name', 'Unknown')} ===")
             response_parts.append(f"Meta Share: {info.get('meta_share', 'N/A')}")
-            if info.get('colors'):
+            if info.get("colors"):
                 response_parts.append(f"Colors: {', '.join(info['colors'])}")
-            
+
             response_parts.append("\n== Mainboard ==")
             # Show top 15 cards to avoid spamming 60 lines, or just show spells?
             # Let's show everything but compacted if possible.
             # For now, just listing them.
             if deck_list.get("mainboard"):
-                for line in deck_list["mainboard"][:20]: # Limit to top 20 lines for brevity in UI
+                for line in deck_list["mainboard"][
+                    :20
+                ]:  # Limit to top 20 lines for brevity in UI
                     response_parts.append(f"  {line}")
                 if len(deck_list["mainboard"]) > 20:
-                    response_parts.append(f"  ... and {len(deck_list['mainboard']) - 20} more cards")
-            
+                    response_parts.append(
+                        f"  ... and {len(deck_list['mainboard']) - 20} more cards"
+                    )
+
             if deck_list.get("sideboard"):
                 response_parts.append("\n== Sideboard ==")
                 for line in deck_list["sideboard"]:
                     response_parts.append(f"  {line}")
-            
+
             response_parts.append("")
 
         # META DECKS LIST (General View)
@@ -367,7 +448,7 @@ def synthesizer_node(state: AgentState) -> AgentState:
             decks = metagame_results["top_decks"]
             if decks:
                 for i, deck in enumerate(decks[:8], 1):
-                    share = deck.get('meta_share', '').replace('\n', '').strip()
+                    share = deck.get("meta_share", "").replace("\n", "").strip()
                     response_parts.append(f"{i}. {deck['name']}")
                     response_parts.append(f"   Share: {share}")
                     response_parts.append("")
@@ -377,9 +458,15 @@ def synthesizer_node(state: AgentState) -> AgentState:
         # LIMITED
         elif "color_pairs" in metagame_results:
             response_parts.append("=== Limited Metagame ===")
-            pairs = sorted(metagame_results["color_pairs"], key=lambda x: x.get("win_rate", 0), reverse=True)
+            pairs = sorted(
+                metagame_results["color_pairs"],
+                key=lambda x: x.get("win_rate", 0),
+                reverse=True,
+            )
             for pair in pairs[:5]:
-                response_parts.append(f"  {pair['colors']}: {pair.get('win_rate', 0):.1%}")
+                response_parts.append(
+                    f"  {pair['colors']}: {pair.get('win_rate', 0):.1%}"
+                )
 
     # 3. Synergy (Bonus)
     if synergy_results:
